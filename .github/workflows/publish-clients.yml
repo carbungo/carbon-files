@@ -34,7 +34,7 @@ jobs:
           export CarbonFiles__AdminKey="spec-export"
           mkdir -p "$CarbonFiles__DataDir"
 
-          dotnet run --project src/CarbonFiles.Api --configuration Release --no-build &
+          dotnet run --project src/CarbonFiles.Api --configuration Release --no-build --no-launch-profile --urls http://localhost:5000 &
           API_PID=$!
           trap "kill $API_PID 2>/dev/null; rm -rf $CarbonFiles__DbPath $CarbonFiles__DataDir" EXIT
 
