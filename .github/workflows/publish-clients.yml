@@ -53,8 +53,10 @@ jobs:
 
   publish-typescript:
     needs: export-spec
-    if: secrets.NPM_TOKEN != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: clients/typescript
@@ -83,13 +85,10 @@ jobs:
         run: npm run build
 
       - name: Publish
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
 
   publish-csharp:
     needs: export-spec
-    if: secrets.NUGET_API_KEY != ''
     runs-on: ubuntu-latest
     env:
       DOTNET_ROLL_FORWARD: LatestMajor
@@ -120,8 +119,10 @@ jobs:
 
   publish-python:
     needs: export-spec
-    if: secrets.PYPI_API_TOKEN != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: clients/python
@@ -150,17 +151,15 @@ jobs:
           ./generate.sh
 
       - name: Build
-        run: pip install poetry twine && poetry build
+        run: pip install poetry build && python -m build
 
       - name: Publish
-        run: twine upload dist/*
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: clients/python/dist/
 
   publish-powershell:
     needs: export-spec
-    if: secrets.PSGALLERY_API_KEY != ''
     runs-on: ubuntu-latest
     defaults:
       run:
