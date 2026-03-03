@@ -5,7 +5,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <PublishAot>true</PublishAot>
-    <InvariantGlobalization>true</InvariantGlobalization>
     <!-- EF Core compiled models produce unavoidable AOT/trim warnings for
          expression-tree based query compilation (queries are interpreted at runtime). -->
     <NoWarn>$(NoWarn);IL2026;IL2104;IL3050</NoWarn>

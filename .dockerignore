@@ -1,4 +1,5 @@
 **/bin
+**/bin\\*
 **/obj
 **/data
 **/.git
@@ -6,5 +7,8 @@
 **/.vs
 **/.idea
 **/TestResults
+clients/
+tests/
+docs/
 *.user
 *.suo
