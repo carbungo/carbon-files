@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CarbonFiles is a file-sharing API with bucket-based organization, API key authentication, and real-time SignalR events. Built with ASP.NET Minimal API on .NET 10, published as a trimmed single-file binary (not full Native AOT).
+CarbonFiles is a file-sharing API with bucket-based organization, API key authentication, and real-time SignalR events. Built with ASP.NET Minimal API on .NET 10, published as a Native AOT binary with compiled EF Core models (no precompiled queries — blocked by dotnet/efcore#35494).
 
 ## Build & Development Commands
 
