@@ -30,10 +30,27 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal
+        run: dotnet test --no-build --configuration Release --verbosity normal --filter "FullyQualifiedName!~E2E"
+
+  e2e:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build Docker image
+        run: docker compose -f docker-compose.e2e.yml build
+
+      - name: Run E2E tests
+        run: dotnet test tests/CarbonFiles.E2E.Tests --verbosity normal
 
   publish:
-    needs: build-and-test
+    needs: [build-and-test, e2e]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
