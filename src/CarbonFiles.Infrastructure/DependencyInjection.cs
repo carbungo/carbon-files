@@ -58,6 +58,7 @@ public static class DependencyInjection
 
         // File services
         services.AddSingleton<FileStorageService>();
+        services.AddSingleton<ContentStorageService>();
         services.AddScoped<IFileService, FileService>();
         services.AddScoped<IUploadService, UploadService>();
         services.AddScoped<IShortUrlService, ShortUrlService>();
