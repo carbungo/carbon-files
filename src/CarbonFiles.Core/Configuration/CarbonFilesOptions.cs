@@ -1,5 +1,12 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace CarbonFiles.Core.Configuration;
 
+// [DynamicallyAccessedMembers] is required to preserve property setters when the binary is
+// published with PublishTrimmed=true. Without it, the ILLink trimmer removes setters that
+// aren't directly called in production code, causing ConfigurationBinder.Bind() to silently
+// fail — all options remain at their default values regardless of environment variables.
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)]
 public sealed class CarbonFilesOptions
 {
     public const string SectionName = "CarbonFiles";
