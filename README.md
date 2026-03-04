@@ -1,6 +1,8 @@
-# CarbonFiles
+# ⚡ CarbonFiles
 
-A fast, lightweight file-sharing API with bucket-based organization, API key authentication, and real-time events. Built with ASP.NET Minimal API on .NET 10, compiled with Native AOT for sub-millisecond response times.
+A fast, lightweight file-sharing API with bucket-based organization, API key authentication, and real-time WebSocket events. Part of the [Carbungo](https://github.com/carbungo) platform.
+
+Built with ASP.NET Minimal API on .NET 10. Designed to be self-hosted, single-binary, and fast by default.
 
 ## Quick Start
 
@@ -8,24 +10,22 @@ A fast, lightweight file-sharing API with bucket-based organization, API key aut
 docker compose up -d
 ```
 
-The API is available at `http://localhost:8080`. The default admin key is `change-me-in-production` — change it via the `CarbonFiles__AdminKey` environment variable.
+The API is available at `http://localhost:8080`. Set your admin key via the `CarbonFiles__AdminKey` environment variable.
 
-## API Overview
+## Features
 
-### Authentication
+- **Bucket-based storage** — organize files into buckets with optional expiration
+- **Multi-auth** — admin keys, scoped API keys (`cf4_`), upload tokens (`cfu_`), dashboard JWTs
+- **Real-time events** — WebSocket notifications for file and bucket changes
+- **Short URLs** — shareable links to any file
+- **ZIP downloads** — download entire buckets as archives
+- **Stream uploads** — PUT large files without multipart overhead
+- **LLM-friendly** — plaintext bucket summaries, content negotiation, clean JSON
+- **Client SDKs** — TypeScript, C#, Python, and PowerShell
 
-All auth uses `Authorization: Bearer <token>`. Three token types:
-
-- **Admin key** — full access to everything
-- **API keys** — scoped to their own buckets (`cf4_<prefix>_<secret>`)
-- **Dashboard tokens** — short-lived JWTs for admin UI access
-
-### Endpoints
+## Usage
 
 ```bash
-# Health check
-curl http://localhost:8080/healthz
-
 # Create an API key (admin)
 curl -X POST http://localhost:8080/api/keys \
   -H "Authorization: Bearer $ADMIN_KEY" \
@@ -44,191 +44,104 @@ curl -X POST http://localhost:8080/api/buckets/$BUCKET_ID/upload \
   -F "files=@screenshot.png" \
   -F "files=@README.md"
 
-# Upload with custom paths
-curl -X POST http://localhost:8080/api/buckets/$BUCKET_ID/upload \
-  -H "Authorization: Bearer $API_KEY" \
-  -F "src/main.rs=@main.rs"
-
-# Stream upload (large files)
-curl -X PUT "http://localhost:8080/api/buckets/$BUCKET_ID/upload/stream?filename=video.mp4" \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @video.mp4
-
-# Download file
+# Download a file
 curl http://localhost:8080/api/buckets/$BUCKET_ID/files/screenshot.png/content
 
 # Download via short URL
 curl -L http://localhost:8080/s/xK9mQ2
 
-# Download bucket as ZIP
-curl http://localhost:8080/api/buckets/$BUCKET_ID/zip -o project.zip
-
-# Get bucket summary (plaintext, LLM-friendly)
+# Get bucket summary (plaintext)
 curl http://localhost:8080/api/buckets/$BUCKET_ID/summary
-
-# System stats (admin)
-curl http://localhost:8080/api/stats \
-  -H "Authorization: Bearer $ADMIN_KEY"
-
-# Create upload token (share upload access without API key)
-curl -X POST http://localhost:8080/api/buckets/$BUCKET_ID/tokens \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"expires_in": "1d", "max_uploads": 10}'
-
-# Upload with token (no auth header needed)
-curl -X POST "http://localhost:8080/api/buckets/$BUCKET_ID/upload?token=$UPLOAD_TOKEN" \
-  -F "files=@photo.jpg"
 ```
 
-### Real-Time Events (SignalR)
+## Real-Time Events (WebSocket)
 
-Connect to `/hub/files` for real-time file and bucket notifications:
+Connect to `/ws/files` for live bucket and file notifications:
 
 ```javascript
-const connection = new signalR.HubConnectionBuilder()
-    .withUrl("/hub/files", { accessTokenFactory: () => token })
-    .withAutomaticReconnect()
-    .build();
+const ws = new WebSocket(`ws://localhost:8080/ws/files?token=${apiKey}`);
 
-connection.on("FileCreated", (bucketId, file) => { /* ... */ });
-connection.on("BucketUpdated", (bucketId, changes) => { /* ... */ });
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  // msg.type: FileCreated | FileUpdated | FileDeleted | BucketCreated | BucketUpdated | BucketDeleted
+  console.log(msg.type, msg.data);
+};
 
-await connection.start();
-await connection.invoke("SubscribeToBucket", bucketId);
+// Subscribe to a specific bucket
+ws.send(JSON.stringify({ action: "subscribe", bucket_id: "abc123" }));
 ```
 
 ## Configuration
 
 | Setting | Env Var | Default | Description |
 |---------|---------|---------|-------------|
-| `AdminKey` | `CarbonFiles__AdminKey` | Required | Admin API key |
-| `JwtSecret` | `CarbonFiles__JwtSecret` | Derived from AdminKey | JWT signing secret |
-| `DataDir` | `CarbonFiles__DataDir` | `./data` | File storage directory |
-| `DbPath` | `CarbonFiles__DbPath` | `./data/carbonfiles.db` | SQLite database path |
-| `MaxUploadSize` | `CarbonFiles__MaxUploadSize` | `0` (unlimited) | Max upload size in bytes |
-| `CleanupIntervalMinutes` | `CarbonFiles__CleanupIntervalMinutes` | `60` | Expired bucket cleanup interval |
-| `CorsOrigins` | `CarbonFiles__CorsOrigins` | `*` | Allowed CORS origins |
+| Admin Key | `CarbonFiles__AdminKey` | *Required* | Admin API key |
+| JWT Secret | `CarbonFiles__JwtSecret` | Derived from AdminKey | JWT signing secret |
+| Data Dir | `CarbonFiles__DataDir` | `./data` | File storage directory |
+| DB Path | `CarbonFiles__DbPath` | `./data/carbonfiles.db` | SQLite database path |
+| Max Upload | `CarbonFiles__MaxUploadSize` | `0` (unlimited) | Max upload size in bytes |
+| Cleanup Interval | `CarbonFiles__CleanupIntervalMinutes` | `60` | Expired bucket cleanup interval |
+| CORS Origins | `CarbonFiles__CorsOrigins` | `*` | Allowed CORS origins |
 
 ## Architecture
 
 ```
-Clients (curl, frontend, LLM agents)
-         |
-         | HTTP / WebSocket
-         v
-+----------------------------------+
-|        CarbonFiles.Api           |
-|  Endpoints | Auth | SignalR Hub  |
-+---------|------------------------+
-          |
-+---------|------------------------+
-|   CarbonFiles.Infrastructure     |
-|  Services | EF Core | FileStore  |
-+---------|------------|----------+
-          |            |
-    +-----v----+  +----v------+
-    |  SQLite  |  | Filesystem |
-    +----------+  +-----------+
+Clients (curl, frontend, SDK, LLM agents)
+              │
+              │ HTTP / WebSocket
+              ▼
+┌──────────────────────────────┐
+│       CarbonFiles.Api        │
+│  Endpoints │ Auth │ WS Hub   │
+├──────────────────────────────┤
+│   CarbonFiles.Infrastructure │
+│  Services │ Dapper │ Storage  │
+├──────────┬───────────────────┤
+│  SQLite  │    Filesystem     │
+└──────────┴───────────────────┘
 ```
-
-## Development Setup
-
-```bash
-# Prerequisites: .NET 10 SDK
-
-# Clone and build
-git clone <repo-url>
-cd carbon-files
-dotnet build
-
-# Run tests
-dotnet test
-
-# Run locally
-dotnet run --project src/CarbonFiles.Api
-```
-
-### Migration Workflow
-
-After changing EF Core entities:
-
-```bash
-# 1. Create migration
-dotnet ef migrations add <Name> \
-  --project src/CarbonFiles.Infrastructure \
-  --startup-project src/CarbonFiles.Api
-
-# 2. Apply migration
-dotnet ef database update \
-  --project src/CarbonFiles.Infrastructure \
-  --startup-project src/CarbonFiles.Api
-
-# 3. Regenerate compiled models (REQUIRED for AOT)
-dotnet ef dbcontext optimize \
-  --project src/CarbonFiles.Infrastructure \
-  --startup-project src/CarbonFiles.Api
-```
-
-Migrations auto-apply in development mode. In production, run migrations explicitly before deploying.
-
-## API Documentation
-
-Interactive API docs available at `/scalar` when running locally (development mode).
 
 ## Client SDKs
-
-Typed client libraries are available for four languages, all generated from the OpenAPI spec.
 
 **TypeScript:**
 ```bash
 npm install @carbonfiles/client
-```
-```typescript
-import { client, createBucket, listFiles } from '@carbonfiles/client';
-
-client.setConfig({ baseUrl: 'https://files.example.com' });
-client.interceptors.request.use((req) => {
-  req.headers.set('Authorization', 'Bearer cf4_your_api_key');
-  return req;
-});
-
-const { data } = await createBucket({ body: { name: 'my-bucket' } });
 ```
 
 **C# (.NET):**
 ```bash
 dotnet add package CarbonFiles.Client
 ```
-```csharp
-services.AddCarbonFilesClient(new Uri("https://files.example.com"));
-// Or with custom auth handler
-services.AddRefitClient<ICarbonFilesApi>(refitSettings)
-    .ConfigureHttpClient(c => c.BaseAddress = new Uri("https://files.example.com"))
-    .AddHttpMessageHandler<AuthHandler>();
-```
 
 **Python:**
 ```bash
 pip install carbonfiles-client
 ```
-```python
-from carbonfiles_client import AuthenticatedClient
-from carbonfiles_client.api.buckets import list_buckets
-
-client = AuthenticatedClient(base_url="https://files.example.com", token="cf4_your_api_key")
-buckets = list_buckets.sync(client=client)
-```
 
 **PowerShell:**
 ```powershell
 Install-Module CarbonFiles
-Connect-CfServer -Uri "https://files.example.com" -Token "cf4_your_api_key"
-$bucket = New-CfBucket -Name "my-bucket"
-Get-CfFile -BucketId $bucket.Id
 ```
+
+📖 See each SDK's README for usage examples.
+
+## Development
+
+```bash
+# Prerequisites: .NET 10 SDK
+dotnet build
+dotnet test
+dotnet run --project src/CarbonFiles.Api
+```
+
+## OpenAPI
+
+Spec available at `/openapi/v1.json`. Interactive docs at `/scalar` in development mode.
 
 ## License
 
 MIT
+
+---
+
+Part of [Carbungo](https://github.com/carbungo) — your cloud, your hardware, your rules.
