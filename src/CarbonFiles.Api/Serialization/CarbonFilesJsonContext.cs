@@ -12,6 +12,7 @@ namespace CarbonFiles.Api.Serialization;
 [JsonSerializable(typeof(PaginatedResponse<BucketFile>))]
 [JsonSerializable(typeof(PaginatedResponse<ApiKeyListItem>))]
 [JsonSerializable(typeof(BucketDetailResponse))]
+[JsonSerializable(typeof(DirectoryListingResponse))]
 [JsonSerializable(typeof(CreateBucketRequest))]
 [JsonSerializable(typeof(UpdateBucketRequest))]
 [JsonSerializable(typeof(CreateApiKeyRequest))]

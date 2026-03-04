@@ -29,6 +29,24 @@ public static class FileEndpoints
         .WithSummary("List files in bucket")
         .WithDescription("Public. Returns a paginated list of files in the specified bucket.");
 
+        // GET /api/buckets/{id}/ls — List directory contents (public)
+        app.MapGet("/api/buckets/{id}/ls", async (string id, IFileService fileService, IBucketService bucketService,
+            string path = "", int limit = 200, int offset = 0, string sort = "name", string order = "asc") =>
+        {
+            var bucket = await bucketService.GetByIdAsync(id);
+            if (bucket == null)
+                return ApiResults.NotFound("Bucket not found");
+
+            var result = await fileService.ListDirectoryAsync(id, path,
+                new PaginationParams { Limit = limit, Offset = offset, Sort = sort, Order = order });
+            return Results.Ok(result);
+        })
+        .Produces<DirectoryListingResponse>(200)
+        .Produces<ErrorResponse>(404)
+        .WithTags("Files")
+        .WithSummary("List directory contents")
+        .WithDescription("Public. Returns files and folder names at a specific path level within the bucket.");
+
         // GET|HEAD /api/buckets/{id}/files/{*filePath} — File metadata or content download
         app.MapMethods("/api/buckets/{id}/files/{*filePath}", new[] { "GET", "HEAD" },
             async (string id, string filePath, HttpContext ctx,

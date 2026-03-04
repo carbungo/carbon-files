@@ -1,6 +1,7 @@
 using System.Data;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
+using CarbonFiles.Core.Models.Responses;
 using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
 using Microsoft.Data.Sqlite;
@@ -61,6 +62,92 @@ public sealed class FileService : IFileService
         {
             Items = items,
             Total = total,
+            Limit = pagination.Limit,
+            Offset = pagination.Offset
+        };
+    }
+
+    public async Task<DirectoryListingResponse> ListDirectoryAsync(string bucketId, string path, PaginationParams pagination)
+    {
+        // Normalize path: trim slashes, append '/' for non-root
+        var trimmed = path.Trim('/');
+        var prefix = trimmed.Length > 0 ? trimmed + "/" : "";
+        var prefixLen = prefix.Length;
+
+        _logger.LogDebug("Listing directory in bucket {BucketId} path={Path} prefix={Prefix}", bucketId, path, prefix);
+
+        // Sort column mapping (whitelist to prevent SQL injection)
+        var sortColumn = pagination.Sort?.ToLowerInvariant() switch
+        {
+            "name" => "Name",
+            "path" => "Path",
+            "size" => "Size",
+            "mime_type" => "MimeType",
+            "updated_at" => "UpdatedAt",
+            "created_at" => "CreatedAt",
+            _ => "Name"
+        };
+        var sortDir = pagination.Order?.ToLowerInvariant() == "desc" ? "DESC" : "ASC";
+
+        // Direct files at this level (paginated)
+        var filesSql = prefix.Length > 0
+            ? $"SELECT * FROM Files WHERE BucketId = @bucketId AND Path LIKE @prefix || '%' AND INSTR(SUBSTR(Path, @prefixLen + 1), '/') = 0 ORDER BY {sortColumn} {sortDir} LIMIT @Limit OFFSET @Offset"
+            : $"SELECT * FROM Files WHERE BucketId = @bucketId AND INSTR(Path, '/') = 0 ORDER BY {sortColumn} {sortDir} LIMIT @Limit OFFSET @Offset";
+
+        var entities = await Db.QueryAsync(_db, filesSql,
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                if (prefix.Length > 0)
+                {
+                    p.AddWithValue("@prefix", prefix);
+                    p.AddWithValue("@prefixLen", prefixLen);
+                }
+                p.AddWithValue("@Limit", pagination.Limit);
+                p.AddWithValue("@Offset", pagination.Offset);
+            },
+            FileEntity.Read);
+        var files = entities.Select(f => f.ToBucketFile()).ToList();
+
+        // Count of direct files at this level
+        var countSql = prefix.Length > 0
+            ? "SELECT COUNT(*) FROM Files WHERE BucketId = @bucketId AND Path LIKE @prefix || '%' AND INSTR(SUBSTR(Path, @prefixLen + 1), '/') = 0"
+            : "SELECT COUNT(*) FROM Files WHERE BucketId = @bucketId AND INSTR(Path, '/') = 0";
+
+        var totalFiles = await Db.ExecuteScalarAsync<int>(_db, countSql,
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                if (prefix.Length > 0)
+                {
+                    p.AddWithValue("@prefix", prefix);
+                    p.AddWithValue("@prefixLen", prefixLen);
+                }
+            });
+
+        // Distinct folder names at this level (not paginated)
+        var foldersSql = prefix.Length > 0
+            ? "SELECT DISTINCT SUBSTR(SUBSTR(Path, @prefixLen + 1), 1, INSTR(SUBSTR(Path, @prefixLen + 1), '/') - 1) AS FolderName FROM Files WHERE BucketId = @bucketId AND Path LIKE @prefix || '%' AND INSTR(SUBSTR(Path, @prefixLen + 1), '/') > 0 ORDER BY FolderName ASC"
+            : "SELECT DISTINCT SUBSTR(Path, 1, INSTR(Path, '/') - 1) AS FolderName FROM Files WHERE BucketId = @bucketId AND INSTR(Path, '/') > 0 ORDER BY FolderName ASC";
+
+        var folders = await Db.QueryAsync(_db, foldersSql,
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                if (prefix.Length > 0)
+                {
+                    p.AddWithValue("@prefix", prefix);
+                    p.AddWithValue("@prefixLen", prefixLen);
+                }
+            },
+            r => r.GetString(0));
+
+        return new DirectoryListingResponse
+        {
+            Files = files,
+            Folders = folders,
+            TotalFiles = totalFiles,
+            TotalFolders = folders.Count,
             Limit = pagination.Limit,
             Offset = pagination.Offset
         };
