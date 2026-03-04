@@ -1,5 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace CarbonFiles.Core.Configuration;
 
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)]
 public sealed class CarbonFilesOptions
 {
     public const string SectionName = "CarbonFiles";

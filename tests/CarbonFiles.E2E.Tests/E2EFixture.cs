@@ -22,8 +22,8 @@ public class E2EFixture : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        // Build and start container
-        await RunCompose("up", "-d", "--build", "--wait");
+        // Build and start container (no --wait; we poll /healthz below)
+        await RunCompose("up", "-d", "--build");
 
         // Discover the mapped port
         var port = (await RunComposeOutput("port", "api", "8080")).Trim();
@@ -59,7 +59,7 @@ public class E2EFixture : IAsyncLifetime
         }
         catch { }
 
-        Client.Dispose();
+        Client?.Dispose();
         await RunCompose("down", "-v", "--remove-orphans");
     }
 
