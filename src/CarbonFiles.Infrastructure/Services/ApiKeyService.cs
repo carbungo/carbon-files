@@ -55,43 +55,59 @@ public sealed class ApiKeyService : IApiKeyService
     {
         var total = await _db.ApiKeys.CountAsync();
 
-        // Build base query with usage stats from buckets
-        var query = _db.ApiKeys
-            .Select(k => new
-            {
-                Key = k,
-                BucketCount = _db.Buckets.Count(b => b.OwnerKeyPrefix == k.Prefix),
-                FileCount = _db.Buckets.Where(b => b.OwnerKeyPrefix == k.Prefix).Sum(b => b.FileCount),
-                TotalSize = _db.Buckets.Where(b => b.OwnerKeyPrefix == k.Prefix).Sum(b => b.TotalSize)
-            });
+        // Use raw SQL for the key query to avoid dynamic IQueryable chains,
+        // and a separate query for bucket stats to avoid correlated subqueries.
+        // Both patterns are rejected by the EF Core precompiler.
 
-        // Apply sorting
-        query = (pagination.Sort?.ToLowerInvariant(), pagination.Order?.ToLowerInvariant()) switch
+        // Sort column mapping (whitelist to prevent SQL injection)
+        var sortColumn = pagination.Sort?.ToLowerInvariant() switch
         {
-            ("name", "asc") => query.OrderBy(x => x.Key.Name),
-            ("name", _) => query.OrderByDescending(x => x.Key.Name),
-            ("last_used_at", "asc") => query.OrderBy(x => x.Key.LastUsedAt),
-            ("last_used_at", _) => query.OrderByDescending(x => x.Key.LastUsedAt),
-            ("total_size", "asc") => query.OrderBy(x => x.TotalSize),
-            ("total_size", _) => query.OrderByDescending(x => x.TotalSize),
-            ("created_at", "asc") => query.OrderBy(x => x.Key.CreatedAt),
-            _ => query.OrderByDescending(x => x.Key.CreatedAt), // default: created_at desc
+            "name" => "Name",
+            "last_used_at" => "LastUsedAt",
+            "created_at" => "CreatedAt",
+            _ => "CreatedAt"
         };
+        var isTotalSizeSort = pagination.Sort?.ToLowerInvariant() == "total_size";
+        var sortDir = pagination.Order?.ToLowerInvariant() == "asc" ? "ASC" : "DESC";
 
-        var items = await query
-            .Skip(pagination.Offset)
-            .Take(pagination.Limit)
-            .Select(x => new ApiKeyListItem
+        // Get bucket stats grouped by owner key prefix (avoids correlated subquery)
+        var stats = await _db.Buckets
+            .Where(b => b.OwnerKeyPrefix != null)
+            .GroupBy(b => b.OwnerKeyPrefix!)
+            .Select(g => new
             {
-                Prefix = x.Key.Prefix,
-                Name = x.Key.Name,
-                CreatedAt = x.Key.CreatedAt,
-                LastUsedAt = x.Key.LastUsedAt,
-                BucketCount = x.BucketCount,
-                FileCount = x.FileCount,
-                TotalSize = x.TotalSize
+                Prefix = g.Key,
+                BucketCount = g.Count(),
+                FileCount = g.Sum(b => b.FileCount),
+                TotalSize = g.Sum(b => b.TotalSize)
             })
             .ToListAsync();
+        var statsLookup = stats.ToDictionary(s => s.Prefix);
+
+        List<ApiKeyEntity> keys;
+        if (isTotalSizeSort)
+        {
+            // For total_size sort, we need all keys and sort in memory
+            // because the sort column comes from the stats join
+            keys = await _db.ApiKeys.ToListAsync();
+            keys = (sortDir == "ASC"
+                ? keys.OrderBy(k => statsLookup.TryGetValue(k.Prefix, out var s) ? s.TotalSize : 0)
+                : keys.OrderByDescending(k => statsLookup.TryGetValue(k.Prefix, out var s) ? s.TotalSize : 0))
+                .Skip(pagination.Offset)
+                .Take(pagination.Limit)
+                .ToList();
+        }
+        else
+        {
+            var sql = $"SELECT * FROM ApiKeys ORDER BY {sortColumn} {sortDir} LIMIT {{0}} OFFSET {{1}}";
+            keys = await _db.ApiKeys.FromSqlRaw(sql, pagination.Limit, pagination.Offset).ToListAsync();
+        }
+
+        var items = keys.Select(k =>
+        {
+            statsLookup.TryGetValue(k.Prefix, out var s);
+            return k.ToListItem(s?.BucketCount ?? 0, s?.FileCount ?? 0, s?.TotalSize ?? 0);
+        }).ToList();
 
         return new PaginatedResponse<ApiKeyListItem>
         {

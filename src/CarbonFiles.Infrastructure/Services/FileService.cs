@@ -28,42 +28,25 @@ public sealed class FileService : IFileService
     {
         _logger.LogDebug("Listing files in bucket {BucketId} (limit={Limit}, offset={Offset})", bucketId, pagination.Limit, pagination.Offset);
 
-        IQueryable<FileEntity> query = _db.Files.Where(f => f.BucketId == bucketId);
+        // Use raw SQL to avoid dynamic IQueryable chains that the EF Core precompiler rejects
+        var total = await _db.Files.Where(f => f.BucketId == bucketId).CountAsync();
 
-        var total = await query.CountAsync();
-
-        // Apply sorting
-        query = (pagination.Sort?.ToLowerInvariant(), pagination.Order?.ToLowerInvariant()) switch
+        // Sort column mapping (whitelist to prevent SQL injection)
+        var sortColumn = pagination.Sort?.ToLowerInvariant() switch
         {
-            ("name", "asc") => query.OrderBy(f => f.Name),
-            ("name", _) => query.OrderByDescending(f => f.Name),
-            ("path", "asc") => query.OrderBy(f => f.Path),
-            ("path", _) => query.OrderByDescending(f => f.Path),
-            ("size", "asc") => query.OrderBy(f => f.Size),
-            ("size", _) => query.OrderByDescending(f => f.Size),
-            ("mime_type", "asc") => query.OrderBy(f => f.MimeType),
-            ("mime_type", _) => query.OrderByDescending(f => f.MimeType),
-            ("updated_at", "asc") => query.OrderBy(f => f.UpdatedAt),
-            ("updated_at", _) => query.OrderByDescending(f => f.UpdatedAt),
-            ("created_at", "asc") => query.OrderBy(f => f.CreatedAt),
-            _ => query.OrderByDescending(f => f.CreatedAt), // default: created_at desc
+            "name" => "Name",
+            "path" => "Path",
+            "size" => "Size",
+            "mime_type" => "MimeType",
+            "updated_at" => "UpdatedAt",
+            "created_at" => "CreatedAt",
+            _ => "CreatedAt"
         };
+        var sortDir = pagination.Order?.ToLowerInvariant() == "asc" ? "ASC" : "DESC";
 
-        var items = await query
-            .Skip(pagination.Offset)
-            .Take(pagination.Limit)
-            .Select(f => new BucketFile
-            {
-                Path = f.Path,
-                Name = f.Name,
-                Size = f.Size,
-                MimeType = f.MimeType,
-                ShortCode = f.ShortCode,
-                ShortUrl = f.ShortCode != null ? "/s/" + f.ShortCode : null,
-                CreatedAt = f.CreatedAt,
-                UpdatedAt = f.UpdatedAt
-            })
-            .ToListAsync();
+        var sql = $"SELECT * FROM Files WHERE BucketId = {{0}} ORDER BY {sortColumn} {sortDir} LIMIT {{1}} OFFSET {{2}}";
+        var entities = await _db.Files.FromSqlRaw(sql, bucketId, pagination.Limit, pagination.Offset).ToListAsync();
+        var items = entities.Select(f => f.ToBucketFile()).ToList();
 
         return new PaginatedResponse<BucketFile>
         {

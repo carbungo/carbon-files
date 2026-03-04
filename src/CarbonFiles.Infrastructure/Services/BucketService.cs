@@ -70,50 +70,49 @@ public sealed class BucketService : IBucketService
         _logger.LogDebug("Listing buckets for {AuthType} (includeExpired={IncludeExpired}, limit={Limit}, offset={Offset})",
             auth.IsAdmin ? "admin" : auth.OwnerName ?? "public", includeExpired, pagination.Limit, pagination.Offset);
 
-        IQueryable<BucketEntity> query = _db.Buckets;
+        // Use raw SQL to avoid dynamic IQueryable chains that the EF Core precompiler rejects
+        var whereClauses = new List<string>();
+        var parameters = new List<object>();
+        var paramIndex = 0;
 
-        // Filter by ownership
         if (auth.IsOwner)
-            query = query.Where(b => b.Owner == auth.OwnerName);
-        // Admin sees all; Public should not reach here (endpoint guards)
-
-        // Exclude expired unless requested (admin only)
-        if (!includeExpired)
-            query = query.Where(b => b.ExpiresAt == null || b.ExpiresAt > DateTime.UtcNow);
-
-        var total = await query.CountAsync();
-
-        // Apply sorting
-        query = (pagination.Sort?.ToLowerInvariant(), pagination.Order?.ToLowerInvariant()) switch
         {
-            ("name", "asc") => query.OrderBy(b => b.Name),
-            ("name", _) => query.OrderByDescending(b => b.Name),
-            ("expires_at", "asc") => query.OrderBy(b => b.ExpiresAt),
-            ("expires_at", _) => query.OrderByDescending(b => b.ExpiresAt),
-            ("last_used_at", "asc") => query.OrderBy(b => b.LastUsedAt),
-            ("last_used_at", _) => query.OrderByDescending(b => b.LastUsedAt),
-            ("total_size", "asc") => query.OrderBy(b => b.TotalSize),
-            ("total_size", _) => query.OrderByDescending(b => b.TotalSize),
-            ("created_at", "asc") => query.OrderBy(b => b.CreatedAt),
-            _ => query.OrderByDescending(b => b.CreatedAt), // default: created_at desc
-        };
+            whereClauses.Add($"Owner = {{{paramIndex}}}");
+            parameters.Add(auth.OwnerName!);
+            paramIndex++;
+        }
 
-        var items = await query
-            .Skip(pagination.Offset)
-            .Take(pagination.Limit)
-            .Select(b => new Bucket
-            {
-                Id = b.Id,
-                Name = b.Name,
-                Owner = b.Owner,
-                Description = b.Description,
-                CreatedAt = b.CreatedAt,
-                ExpiresAt = b.ExpiresAt,
-                LastUsedAt = b.LastUsedAt,
-                FileCount = b.FileCount,
-                TotalSize = b.TotalSize
-            })
-            .ToListAsync();
+        if (!includeExpired)
+        {
+            whereClauses.Add($"(ExpiresAt IS NULL OR ExpiresAt > {{{paramIndex}}})");
+            parameters.Add(DateTime.UtcNow);
+            paramIndex++;
+        }
+
+        var whereClause = whereClauses.Count > 0 ? "WHERE " + string.Join(" AND ", whereClauses) : "";
+
+        // Count query
+        var countSql = $"SELECT COUNT(*) AS \"Value\" FROM Buckets {whereClause}";
+        var total = await _db.Database.SqlQueryRaw<int>(countSql, parameters.ToArray()).FirstAsync();
+
+        // Sort column mapping (whitelist to prevent SQL injection)
+        var sortColumn = pagination.Sort?.ToLowerInvariant() switch
+        {
+            "name" => "Name",
+            "expires_at" => "ExpiresAt",
+            "last_used_at" => "LastUsedAt",
+            "total_size" => "TotalSize",
+            "created_at" => "CreatedAt",
+            _ => "CreatedAt"
+        };
+        var sortDir = pagination.Order?.ToLowerInvariant() == "asc" ? "ASC" : "DESC";
+
+        var dataSql = $"SELECT * FROM Buckets {whereClause} ORDER BY {sortColumn} {sortDir} LIMIT {{{paramIndex}}} OFFSET {{{paramIndex + 1}}}";
+        parameters.Add(pagination.Limit);
+        parameters.Add(pagination.Offset);
+
+        var entities = await _db.Buckets.FromSqlRaw(dataSql, parameters.ToArray()).ToListAsync();
+        var items = entities.Select(b => b.ToBucket()).ToList();
 
         return new PaginatedResponse<Bucket>
         {
