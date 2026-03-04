@@ -19,7 +19,7 @@ public sealed class FileStorageService
 
     public string GetFilePath(string bucketId, string filePath)
     {
-        var encoded = Uri.EscapeDataString(filePath.ToLowerInvariant());
+        var encoded = Uri.EscapeDataString(filePath);
         return Path.Combine(_dataDir, bucketId, encoded);
     }
 

@@ -141,4 +141,36 @@ public class BucketZipTests : IntegrationTestBase
         var body = await response.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken);
         body.Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task ZipDownload_NestedPaths_CreatesDirectoryEntries()
+    {
+        var bucketId = await CreateBucketAsync("zip-nested");
+        await UploadFileAsync(bucketId, "src/main.cs", "class Main {}");
+        await UploadFileAsync(bucketId, "src/utils/helper.cs", "class Helper {}");
+        await UploadFileAsync(bucketId, "root.txt", "root file");
+
+        var response = await Fixture.Client.GetAsync($"/api/buckets/{bucketId}/zip", TestContext.Current.CancellationToken);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var zipStream = await response.Content.ReadAsStreamAsync(TestContext.Current.CancellationToken);
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+
+        var entryNames = archive.Entries.Select(e => e.FullName).OrderBy(n => n).ToList();
+
+        // Should contain explicit directory entries
+        entryNames.Should().Contain("src/");
+        entryNames.Should().Contain("src/utils/");
+
+        // Should contain file entries with full paths
+        entryNames.Should().Contain("src/main.cs");
+        entryNames.Should().Contain("src/utils/helper.cs");
+        entryNames.Should().Contain("root.txt");
+
+        // Verify file content is preserved
+        var helper = archive.GetEntry("src/utils/helper.cs")!;
+        using var reader = new StreamReader(helper.Open(), Encoding.UTF8);
+        var content = await reader.ReadToEndAsync(TestContext.Current.CancellationToken);
+        content.Should().Be("class Helper {}");
+    }
 }

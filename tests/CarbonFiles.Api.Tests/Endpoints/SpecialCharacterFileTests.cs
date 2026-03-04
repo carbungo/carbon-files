@@ -14,8 +14,8 @@ namespace CarbonFiles.Api.Tests.Endpoints;
 /// and other non-ASCII characters work correctly through the full lifecycle:
 /// upload -> list -> get metadata -> download content -> verify content -> delete.
 ///
-/// The API stores files on disk using URL-encoded lowercase paths, but the original
-/// filenames should be preserved in API responses.
+/// The API stores files on disk using URL-encoded paths. Original filenames
+/// (including case) are preserved in API responses.
 /// </summary>
 public class SpecialCharacterFileTests : IntegrationTestBase
 {
@@ -91,8 +91,8 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         using var client = Fixture.CreateAdminClient();
         var bucketId = await CreateBucketAsync(client);
 
-        // The API lowercases the path, so expected path in metadata is lowercase
-        var expectedPath = fileName.ToLowerInvariant();
+        // The API preserves the original path case
+        var expectedPath = fileName;
         var expectedName = Path.GetFileName(fileName);
         var expectedSize = (long)Encoding.UTF8.GetByteCount(fileContent);
 
@@ -101,7 +101,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
 
         var uploadedPath = uploaded.GetProperty("path").GetString();
         uploadedPath.Should().Be(expectedPath,
-            $"Uploaded file path should be the lowercased original for '{fileName}'");
+            $"Uploaded file path should be the original path for '{fileName}'");
 
         var uploadedName = uploaded.GetProperty("name").GetString();
         uploadedName.Should().Be(expectedName,
@@ -131,7 +131,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
 
         var meta = await ParseJsonAsync(metaResponse);
         meta.GetProperty("path").GetString().Should().Be(expectedPath,
-            $"Metadata path should be the lowercased original for '{fileName}'");
+            $"Metadata path should be the original path for '{fileName}'");
         meta.GetProperty("name").GetString().Should().Be(expectedName,
             $"Metadata name should be the original filename for '{fileName}'");
         meta.GetProperty("size").GetInt64().Should().Be(expectedSize,
@@ -389,12 +389,12 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         var bucketId = await CreateBucketAsync(client);
         var fileName = "\U0001f389stream-party.txt";
         var fileContent = "Stream uploaded emoji file";
-        var expectedPath = fileName.ToLowerInvariant();
+        var expectedPath = fileName;
 
         var uploaded = await StreamUploadFileAsync(client, bucketId, fileName, fileContent);
 
         uploaded.GetProperty("path").GetString().Should().Be(expectedPath,
-            "Stream upload should preserve emoji filename (lowercased) in path");
+            "Stream upload should preserve emoji filename (case-preserved) in path");
         uploaded.GetProperty("name").GetString().Should().Be(Path.GetFileName(fileName),
             "Stream upload should preserve emoji filename in name");
 
@@ -415,12 +415,12 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         var bucketId = await CreateBucketAsync(client);
         var fileName = "donn\u00E9es-stream.csv";
         var fileContent = "a,b\n1,2";
-        var expectedPath = fileName.ToLowerInvariant();
+        var expectedPath = fileName;
 
         var uploaded = await StreamUploadFileAsync(client, bucketId, fileName, fileContent);
 
         uploaded.GetProperty("path").GetString().Should().Be(expectedPath,
-            "Stream upload should preserve unicode filename (lowercased) in path");
+            "Stream upload should preserve unicode filename (case-preserved) in path");
 
         // Verify content
         var encodedPath = Uri.EscapeDataString(expectedPath);
@@ -438,7 +438,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         var bucketId = await CreateBucketAsync(client);
         var fileName = "my stream file.txt";
         var fileContent = "Stream uploaded file with spaces";
-        var expectedPath = fileName.ToLowerInvariant();
+        var expectedPath = fileName;
 
         var uploaded = await StreamUploadFileAsync(client, bucketId, fileName, fileContent);
 
@@ -473,9 +473,9 @@ public class SpecialCharacterFileTests : IntegrationTestBase
 
         var body = await ParseJsonAsync(response);
         var file = body.GetProperty("uploaded")[0];
-        // The field name becomes the path, lowercased
-        file.GetProperty("path").GetString().Should().Be(fieldName.ToLowerInvariant(),
-            "Custom field name with special chars should be used as the path (lowercased)");
+        // The field name becomes the path
+        file.GetProperty("path").GetString().Should().Be(fieldName,
+            "Custom field name with special chars should be used as the path (case-preserved)");
     }
 
     [Fact]
@@ -493,8 +493,8 @@ public class SpecialCharacterFileTests : IntegrationTestBase
 
         var body = await ParseJsonAsync(response);
         var file = body.GetProperty("uploaded")[0];
-        file.GetProperty("path").GetString().Should().Be(fieldName.ToLowerInvariant(),
-            "Custom field name with emojis should be used as the path (lowercased)");
+        file.GetProperty("path").GetString().Should().Be(fieldName,
+            "Custom field name with emojis should be used as the path (case-preserved)");
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -553,10 +553,10 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         archive.Entries.Should().HaveCount(2);
 
         var entryNames = archive.Entries.Select(e => e.FullName).OrderBy(n => n).ToList();
-        // ZIP entries use the DB path which is lowercased
+        // ZIP entries use the DB path which preserves original case
         entryNames.Should().Contain("normal.txt");
         entryNames.Should().Contain("\U0001f389party.txt",
-            "ZIP archive should contain the emoji filename (lowercased)");
+            "ZIP archive should contain the emoji filename (case-preserved)");
     }
 
     [Fact]
@@ -577,7 +577,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
 
         var entry = archive.Entries[0];
         entry.FullName.Should().Be("donn\u00E9es.csv",
-            "ZIP entry should have the unicode filename (lowercased)");
+            "ZIP entry should have the unicode filename (case-preserved)");
 
         using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
         var actualContent = await reader.ReadToEndAsync(TestContext.Current.CancellationToken);
@@ -654,7 +654,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         var entryNames = archive.Entries.Select(e => e.FullName).ToHashSet();
         foreach (var name in fileNames)
         {
-            var expectedName = name.ToLowerInvariant();
+            var expectedName = name;
             entryNames.Should().Contain(expectedName,
                 $"ZIP should contain entry '{expectedName}'");
         }
@@ -733,7 +733,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
             "Size should be updated for re-uploaded emoji file");
 
         // Verify new content is served
-        var encodedPath = Uri.EscapeDataString(fileName.ToLowerInvariant());
+        var encodedPath = Uri.EscapeDataString(fileName);
         var downloadResponse = await Fixture.Client.GetAsync(
             $"/api/buckets/{bucketId}/files/{encodedPath}/content", TestContext.Current.CancellationToken);
         var content = await downloadResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
@@ -754,7 +754,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         var fileName = "\U0001f389party.txt";
         await UploadFileAsync(client, bucketId, fileName, "party content");
 
-        var encodedPath = Uri.EscapeDataString(fileName.ToLowerInvariant());
+        var encodedPath = Uri.EscapeDataString(fileName);
         var response = await Fixture.Client.GetAsync(
             $"/api/buckets/{bucketId}/files/{encodedPath}/content?download=true", TestContext.Current.CancellationToken);
         response.StatusCode.Should().Be(HttpStatusCode.OK,
@@ -765,8 +765,8 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         response.Content.Headers.ContentDisposition!.DispositionType.Should().Be("attachment",
             "Content-Disposition should be 'attachment'");
 
-        // The name in Content-Disposition should preserve the original (lowercased) filename
-        // Note: Path.GetFileName on the lowercased path gives us the expected name
+        // The name in Content-Disposition should preserve the original (case-preserved) filename
+        // Note: Path.GetFileName extracts the filename from the path
         var expectedName = Path.GetFileName(fileName);
         var dispositionFileName = response.Content.Headers.ContentDisposition.FileName;
         dispositionFileName.Should().NotBeNullOrEmpty(
@@ -782,7 +782,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         var fileName = "donn\u00E9es.csv";
         await UploadFileAsync(client, bucketId, fileName, "data");
 
-        var encodedPath = Uri.EscapeDataString(fileName.ToLowerInvariant());
+        var encodedPath = Uri.EscapeDataString(fileName);
         var response = await Fixture.Client.GetAsync(
             $"/api/buckets/{bucketId}/files/{encodedPath}/content?download=true", TestContext.Current.CancellationToken);
         response.StatusCode.Should().Be(HttpStatusCode.OK,
@@ -837,7 +837,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
 
         foreach (var name in fileNames)
         {
-            var expectedPath = name.ToLowerInvariant();
+            var expectedPath = name;
             listedPaths.Should().Contain(expectedPath,
                 $"File listing should contain '{expectedPath}'");
         }
@@ -857,7 +857,7 @@ public class SpecialCharacterFileTests : IntegrationTestBase
         var fileContent = "Head request emoji content";
         await UploadFileAsync(client, bucketId, fileName, fileContent);
 
-        var encodedPath = Uri.EscapeDataString(fileName.ToLowerInvariant());
+        var encodedPath = Uri.EscapeDataString(fileName);
         var request = new HttpRequestMessage(HttpMethod.Head,
             $"/api/buckets/{bucketId}/files/{encodedPath}/content");
         var response = await Fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);

@@ -178,9 +178,29 @@ public static class BucketEndpoints
                 syncIoFeature.AllowSynchronousIO = true;
 
             using var archive = new ZipArchive(ctx.Response.Body, ZipArchiveMode.Create, leaveOpen: true);
+
+            // Create explicit directory entries so all extractors produce nested folders
+            var directories = new HashSet<string>();
             foreach (var file in files)
             {
-                var entry = archive.CreateEntry(file.Path, CompressionLevel.Fastest);
+                var dir = file.Path.Replace('\\', '/');
+                var idx = dir.LastIndexOf('/');
+                while (idx > 0)
+                {
+                    dir = dir[..idx];
+                    if (!directories.Add(dir + "/"))
+                        break; // parent dirs already added
+                    idx = dir.LastIndexOf('/');
+                }
+            }
+
+            foreach (var dir in directories.OrderBy(d => d))
+                archive.CreateEntry(dir);
+
+            foreach (var file in files)
+            {
+                var entryPath = file.Path.Replace('\\', '/');
+                var entry = archive.CreateEntry(entryPath, CompressionLevel.Fastest);
                 await using var entryStream = entry.Open();
                 await using var fileStream = storage.OpenRead(id, file.Path);
                 if (fileStream != null)

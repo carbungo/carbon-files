@@ -72,13 +72,12 @@ public sealed class FileService : IFileService
         if (cached != null)
             return cached;
 
-        var normalized = path.ToLowerInvariant();
         var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
+            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @path",
             p =>
             {
                 p.AddWithValue("@bucketId", bucketId);
-                p.AddWithValue("@normalized", normalized);
+                p.AddWithValue("@path", path);
             },
             FileEntity.Read);
         if (entity == null)
@@ -94,8 +93,6 @@ public sealed class FileService : IFileService
 
     public async Task<bool> DeleteAsync(string bucketId, string path, AuthContext auth)
     {
-        var normalized = path.ToLowerInvariant();
-
         // Check bucket ownership
         var bucket = await Db.QueryFirstOrDefaultAsync(_db,
             "SELECT * FROM Buckets WHERE Id = @bucketId",
@@ -111,11 +108,11 @@ public sealed class FileService : IFileService
         }
 
         var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
+            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @path",
             p =>
             {
                 p.AddWithValue("@bucketId", bucketId);
-                p.AddWithValue("@normalized", normalized);
+                p.AddWithValue("@path", path);
             },
             FileEntity.Read);
         if (entity == null)
@@ -139,22 +136,22 @@ public sealed class FileService : IFileService
             }, tx);
 
         await Db.ExecuteAsync(_db,
-            "DELETE FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
+            "DELETE FROM Files WHERE BucketId = @bucketId AND Path = @path",
             p =>
             {
                 p.AddWithValue("@bucketId", bucketId);
-                p.AddWithValue("@normalized", normalized);
+                p.AddWithValue("@path", path);
             }, tx);
 
         tx.Commit();
 
         // Delete from disk
-        _storage.DeleteFile(bucketId, normalized);
+        _storage.DeleteFile(bucketId, path);
 
-        _logger.LogInformation("Deleted file {Path} from bucket {BucketId}", normalized, bucketId);
+        _logger.LogInformation("Deleted file {Path} from bucket {BucketId}", path, bucketId);
 
-        await _notifications.NotifyFileDeleted(bucketId, normalized);
-        _cache.InvalidateFile(bucketId, normalized);
+        await _notifications.NotifyFileDeleted(bucketId, path);
+        _cache.InvalidateFile(bucketId, path);
         _cache.InvalidateBucket(bucketId);
         _cache.InvalidateStats();
         return true;
@@ -173,13 +170,12 @@ public sealed class FileService : IFileService
 
     public async Task<bool> UpdateFileSizeAsync(string bucketId, string path, long newSize)
     {
-        var normalized = path.ToLowerInvariant();
         var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
+            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @path",
             p =>
             {
                 p.AddWithValue("@bucketId", bucketId);
-                p.AddWithValue("@normalized", normalized);
+                p.AddWithValue("@path", path);
             },
             FileEntity.Read);
         if (entity == null)
@@ -191,13 +187,13 @@ public sealed class FileService : IFileService
         using var tx = _db.BeginTransaction();
 
         await Db.ExecuteAsync(_db,
-            "UPDATE Files SET Size = @newSize, UpdatedAt = @now WHERE BucketId = @bucketId AND Path = @normalized",
+            "UPDATE Files SET Size = @newSize, UpdatedAt = @now WHERE BucketId = @bucketId AND Path = @path",
             p =>
             {
                 p.AddWithValue("@newSize", newSize);
                 p.AddWithValue("@now", now);
                 p.AddWithValue("@bucketId", bucketId);
-                p.AddWithValue("@normalized", normalized);
+                p.AddWithValue("@path", path);
             }, tx);
 
         // Update bucket total size

@@ -245,4 +245,157 @@ public class UploadEndpointTests : IntegrationTestBase
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
+
+    // ── Nested Path Uploads ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task MultipartUpload_NestedPath_PreservesPathAndName()
+    {
+        using var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        using var content = CreateMultipartContent("file", "src/nested/test.txt", "nested content");
+        var response = await client.PostAsync($"/api/buckets/{bucketId}/upload", content, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await ParseJsonAsync(response);
+        var file = body.GetProperty("uploaded")[0];
+        file.GetProperty("path").GetString().Should().Be("src/nested/test.txt");
+        file.GetProperty("name").GetString().Should().Be("test.txt");
+    }
+
+    [Fact]
+    public async Task MultipartUpload_NestedPath_MetadataRetrievable()
+    {
+        using var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        using var content = CreateMultipartContent("file", "src/utils/helper.cs", "class Helper {}");
+        var uploadResp = await client.PostAsync($"/api/buckets/{bucketId}/upload", content, TestContext.Current.CancellationToken);
+        uploadResp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Retrieve metadata using the nested path (not URL-encoded slashes)
+        var metaResp = await Fixture.Client.GetAsync(
+            $"/api/buckets/{bucketId}/files/src/utils/helper.cs", TestContext.Current.CancellationToken);
+        metaResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var meta = await ParseJsonAsync(metaResp);
+        meta.GetProperty("path").GetString().Should().Be("src/utils/helper.cs");
+        meta.GetProperty("name").GetString().Should().Be("helper.cs");
+    }
+
+    [Fact]
+    public async Task MultipartUpload_NestedPath_ContentDownloadable()
+    {
+        using var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+        var fileContent = "deeply nested content";
+
+        using var content = CreateMultipartContent("file", "a/b/c/deep.txt", fileContent);
+        var uploadResp = await client.PostAsync($"/api/buckets/{bucketId}/upload", content, TestContext.Current.CancellationToken);
+        uploadResp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var downloadResp = await Fixture.Client.GetAsync(
+            $"/api/buckets/{bucketId}/files/a/b/c/deep.txt/content", TestContext.Current.CancellationToken);
+        downloadResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var downloaded = await downloadResp.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        downloaded.Should().Be(fileContent);
+    }
+
+    [Fact]
+    public async Task MultipartUpload_NestedPath_AppearsInFileListing()
+    {
+        using var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        using var content1 = CreateMultipartContent("file", "src/main.cs", "main");
+        await client.PostAsync($"/api/buckets/{bucketId}/upload", content1, TestContext.Current.CancellationToken);
+
+        using var content2 = CreateMultipartContent("file", "src/utils/helper.cs", "helper");
+        await client.PostAsync($"/api/buckets/{bucketId}/upload", content2, TestContext.Current.CancellationToken);
+
+        using var content3 = CreateMultipartContent("file", "root.txt", "root");
+        await client.PostAsync($"/api/buckets/{bucketId}/upload", content3, TestContext.Current.CancellationToken);
+
+        var listResp = await Fixture.Client.GetAsync(
+            $"/api/buckets/{bucketId}/files?limit=50", TestContext.Current.CancellationToken);
+        listResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await ParseJsonAsync(listResp);
+        var items = body.GetProperty("items");
+        items.GetArrayLength().Should().Be(3);
+
+        var paths = new HashSet<string>();
+        for (int i = 0; i < items.GetArrayLength(); i++)
+            paths.Add(items[i].GetProperty("path").GetString()!);
+
+        paths.Should().Contain("src/main.cs");
+        paths.Should().Contain("src/utils/helper.cs");
+        paths.Should().Contain("root.txt");
+    }
+
+    [Fact]
+    public async Task MultipartUpload_NestedPath_Deletable()
+    {
+        using var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        using var content = CreateMultipartContent("file", "docs/readme.md", "# Readme");
+        await client.PostAsync($"/api/buckets/{bucketId}/upload", content, TestContext.Current.CancellationToken);
+
+        var deleteResp = await client.DeleteAsync(
+            $"/api/buckets/{bucketId}/files/docs/readme.md", TestContext.Current.CancellationToken);
+        deleteResp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var metaResp = await Fixture.Client.GetAsync(
+            $"/api/buckets/{bucketId}/files/docs/readme.md", TestContext.Current.CancellationToken);
+        metaResp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task StreamUpload_NestedPath_FullRoundTrip()
+    {
+        using var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+        var fileContent = "stream nested content";
+
+        var byteContent = new ByteArrayContent(Encoding.UTF8.GetBytes(fileContent));
+        byteContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        var encodedFilename = Uri.EscapeDataString("lib/stream/data.bin");
+
+        var uploadResp = await client.PutAsync(
+            $"/api/buckets/{bucketId}/upload/stream?filename={encodedFilename}", byteContent, TestContext.Current.CancellationToken);
+        uploadResp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var body = await ParseJsonAsync(uploadResp);
+        var file = body.GetProperty("uploaded")[0];
+        file.GetProperty("path").GetString().Should().Be("lib/stream/data.bin");
+        file.GetProperty("name").GetString().Should().Be("data.bin");
+
+        // Verify content downloadable
+        var downloadResp = await Fixture.Client.GetAsync(
+            $"/api/buckets/{bucketId}/files/lib/stream/data.bin/content", TestContext.Current.CancellationToken);
+        downloadResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var downloaded = await downloadResp.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        downloaded.Should().Be(fileContent);
+    }
+
+    [Fact]
+    public async Task MultipartUpload_CustomFieldNameWithSlashes_UsesFieldNameAsPath()
+    {
+        using var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        // Non-generic field name with slashes → used as the file path
+        using var content = CreateMultipartContent("config/app/settings.json", "ignored.txt", "{\"key\":\"value\"}");
+        var response = await client.PostAsync($"/api/buckets/{bucketId}/upload", content, TestContext.Current.CancellationToken);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await ParseJsonAsync(response);
+        var file = body.GetProperty("uploaded")[0];
+        file.GetProperty("path").GetString().Should().Be("config/app/settings.json");
+        file.GetProperty("name").GetString().Should().Be("settings.json");
+    }
 }

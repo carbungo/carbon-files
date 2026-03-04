@@ -30,20 +30,19 @@ public sealed class UploadService : IUploadService
     {
         _logger.LogDebug("Storing file {Path} in bucket {BucketId}", path, bucketId);
 
-        var normalized = path.ToLowerInvariant();
         var name = Path.GetFileName(path);
         var mimeType = MimeDetector.DetectFromExtension(path);
 
         // Stream content to disk (pipelined: network reads and disk writes run concurrently)
-        var size = await _storage.StoreAsync(bucketId, normalized, content, maxSize, ct);
+        var size = await _storage.StoreAsync(bucketId, path, content, maxSize, ct);
 
         // Check if file already exists
         var existing = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
+            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @path",
             p =>
             {
                 p.AddWithValue("@bucketId", bucketId);
-                p.AddWithValue("@normalized", normalized);
+                p.AddWithValue("@path", path);
             },
             FileEntity.Read);
         var now = DateTime.UtcNow;
@@ -56,7 +55,7 @@ public sealed class UploadService : IUploadService
             using var tx = _db.BeginTransaction();
 
             await Db.ExecuteAsync(_db,
-                "UPDATE Files SET Size = @size, MimeType = @mimeType, Name = @name, UpdatedAt = @now WHERE BucketId = @bucketId AND Path = @normalized",
+                "UPDATE Files SET Size = @size, MimeType = @mimeType, Name = @name, UpdatedAt = @now WHERE BucketId = @bucketId AND Path = @path",
                 p =>
                 {
                     p.AddWithValue("@size", size);
@@ -64,7 +63,7 @@ public sealed class UploadService : IUploadService
                     p.AddWithValue("@name", name);
                     p.AddWithValue("@now", now);
                     p.AddWithValue("@bucketId", bucketId);
-                    p.AddWithValue("@normalized", normalized);
+                    p.AddWithValue("@path", path);
                 }, tx);
 
             // Update bucket total size (difference) and last used
@@ -80,11 +79,11 @@ public sealed class UploadService : IUploadService
 
             tx.Commit();
 
-            _cache.InvalidateFile(bucketId, normalized);
+            _cache.InvalidateFile(bucketId, path);
             _cache.InvalidateBucket(bucketId);
             _cache.InvalidateStats();
 
-            _logger.LogInformation("Updated file {Path} in bucket {BucketId} ({OldSize} -> {Size} bytes)", normalized, bucketId, oldSize, size);
+            _logger.LogInformation("Updated file {Path} in bucket {BucketId} ({OldSize} -> {Size} bytes)", path, bucketId, oldSize, size);
 
             var updatedFile = ToBucketFile(existing.Path, name, size, mimeType, existing.ShortCode, existing.CreatedAt, now);
             await _notifications.NotifyFileUpdated(bucketId, updatedFile);
@@ -102,7 +101,7 @@ public sealed class UploadService : IUploadService
                 p =>
                 {
                     p.AddWithValue("@BucketId", bucketId);
-                    p.AddWithValue("@Path", normalized);
+                    p.AddWithValue("@Path", path);
                     p.AddWithValue("@Name", name);
                     p.AddWithValue("@Size", size);
                     p.AddWithValue("@MimeType", mimeType);
@@ -118,7 +117,7 @@ public sealed class UploadService : IUploadService
                 {
                     p.AddWithValue("@Code", shortCode);
                     p.AddWithValue("@BucketId", bucketId);
-                    p.AddWithValue("@FilePath", normalized);
+                    p.AddWithValue("@FilePath", path);
                     p.AddWithValue("@CreatedAt", now);
                 }, tx);
 
@@ -134,13 +133,13 @@ public sealed class UploadService : IUploadService
 
             tx.Commit();
 
-            _cache.InvalidateFile(bucketId, normalized);
+            _cache.InvalidateFile(bucketId, path);
             _cache.InvalidateBucket(bucketId);
             _cache.InvalidateStats();
 
-            _logger.LogInformation("Created file {Path} in bucket {BucketId} ({Size} bytes, short code {ShortCode})", normalized, bucketId, size, shortCode);
+            _logger.LogInformation("Created file {Path} in bucket {BucketId} ({Size} bytes, short code {ShortCode})", path, bucketId, size, shortCode);
 
-            var createdFile = ToBucketFile(normalized, name, size, mimeType, shortCode, now, now);
+            var createdFile = ToBucketFile(path, name, size, mimeType, shortCode, now, now);
             await _notifications.NotifyFileCreated(bucketId, createdFile);
             return createdFile;
         }
@@ -148,7 +147,7 @@ public sealed class UploadService : IUploadService
 
     public Task<long> GetStoredFileSizeAsync(string bucketId, string path)
     {
-        var size = _storage.GetFileSize(bucketId, path.ToLowerInvariant());
+        var size = _storage.GetFileSize(bucketId, path);
         return Task.FromResult(size);
     }
 

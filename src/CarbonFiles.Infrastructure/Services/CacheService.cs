@@ -60,7 +60,7 @@ public sealed class CacheService : ICacheService
 
     public BucketFile? GetFileMetadata(string bucketId, string path)
     {
-        var key = $"file:{bucketId}:{path.ToLowerInvariant()}";
+        var key = $"file:{bucketId}:{path}";
         if (_cache.TryGetValue(key, out BucketFile? file))
         {
             _logger.LogDebug("Cache hit: {Key}", key);
@@ -72,14 +72,14 @@ public sealed class CacheService : ICacheService
 
     public void SetFileMetadata(string bucketId, string path, BucketFile file)
     {
-        var key = $"file:{bucketId}:{path.ToLowerInvariant()}";
+        var key = $"file:{bucketId}:{path}";
         _cache.Set(key, file, FileTtl);
         TrackKey(bucketId, key);
     }
 
     public void InvalidateFile(string bucketId, string path)
     {
-        var key = $"file:{bucketId}:{path.ToLowerInvariant()}";
+        var key = $"file:{bucketId}:{path}";
         _cache.Remove(key);
         UntrackKey(bucketId, key);
         _logger.LogDebug("Cache invalidated: {Key}", key);
