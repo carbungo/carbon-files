@@ -14,10 +14,27 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<CarbonFilesOptions>(configuration.GetSection(CarbonFilesOptions.SectionName));
+        // Configure<T> with manual lambda — IConfiguration.Bind() uses reflection trimmed under AOT
+        var section = configuration.GetSection(CarbonFilesOptions.SectionName);
+        services.Configure<CarbonFilesOptions>(opts =>
+        {
+            opts.AdminKey = section[nameof(CarbonFilesOptions.AdminKey)] ?? string.Empty;
+            opts.JwtSecret = section[nameof(CarbonFilesOptions.JwtSecret)];
+            opts.DataDir = section[nameof(CarbonFilesOptions.DataDir)] ?? "./data";
+            opts.DbPath = section[nameof(CarbonFilesOptions.DbPath)] ?? "./data/carbonfiles.db";
+            opts.MaxUploadSize = long.TryParse(section[nameof(CarbonFilesOptions.MaxUploadSize)], out var maxUpload) ? maxUpload : 0;
+            opts.CleanupIntervalMinutes = int.TryParse(section[nameof(CarbonFilesOptions.CleanupIntervalMinutes)], out var cleanup) ? cleanup : 60;
+            opts.CorsOrigins = section[nameof(CarbonFilesOptions.CorsOrigins)] ?? "*";
+            opts.EnableScalar = !bool.TryParse(section[nameof(CarbonFilesOptions.EnableScalar)], out var scalar) || scalar;
+        });
 
-        var options = new CarbonFilesOptions();
-        configuration.GetSection(CarbonFilesOptions.SectionName).Bind(options);
+        // Also read locally for startup-time values (DbPath, JwtSecret)
+        var options = new CarbonFilesOptions
+        {
+            AdminKey = section[nameof(CarbonFilesOptions.AdminKey)] ?? string.Empty,
+            JwtSecret = section[nameof(CarbonFilesOptions.JwtSecret)],
+            DbPath = section[nameof(CarbonFilesOptions.DbPath)] ?? "./data/carbonfiles.db",
+        };
 
         // EF Core + SQLite
         services.AddDbContext<CarbonFilesDbContext>(opts =>
