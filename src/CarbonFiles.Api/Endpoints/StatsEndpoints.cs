@@ -3,8 +3,6 @@ using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Responses;
-using CarbonFiles.Infrastructure.Data;
-using Microsoft.EntityFrameworkCore;
 
 namespace CarbonFiles.Api.Endpoints;
 
@@ -12,7 +10,7 @@ public static class StatsEndpoints
 {
     public static void MapStatsEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/api/stats", async (HttpContext ctx, CarbonFilesDbContext db, ICacheService cache, ILoggerFactory loggerFactory) =>
+        app.MapGet("/api/stats", async (HttpContext ctx, IStatsService statsService, ICacheService cache, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.StatsEndpoints");
             var auth = ctx.GetAuthContext();
@@ -23,26 +21,7 @@ public static class StatsEndpoints
             if (cachedStats != null)
                 return Results.Ok(cachedStats);
 
-            var now = DateTime.UtcNow;
-            var activeBuckets = db.Buckets.Where(b => b.ExpiresAt == null || b.ExpiresAt > now);
-
-            var stats = new StatsResponse
-            {
-                TotalBuckets = await activeBuckets.CountAsync(),
-                TotalFiles = await db.Files.CountAsync(),
-                TotalSize = await db.Files.SumAsync(f => (long?)f.Size) ?? 0,
-                TotalKeys = await db.ApiKeys.CountAsync(),
-                TotalDownloads = await activeBuckets.SumAsync(b => (long?)b.DownloadCount) ?? 0,
-                StorageByOwner = await activeBuckets
-                    .GroupBy(b => b.Owner)
-                    .Select(g => new OwnerStats
-                    {
-                        Owner = g.Key,
-                        BucketCount = g.Count(),
-                        FileCount = g.Sum(b => b.FileCount),
-                        TotalSize = g.Sum(b => b.TotalSize)
-                    }).ToListAsync()
-            };
+            var stats = await statsService.GetStatsAsync();
 
             logger.LogDebug("Stats queried: {BucketCount} buckets, {FileCount} files", stats.TotalBuckets, stats.TotalFiles);
             cache.SetStats(stats);

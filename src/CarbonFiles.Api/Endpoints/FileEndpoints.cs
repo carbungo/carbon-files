@@ -3,9 +3,7 @@ using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Responses;
-using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Services;
-using Microsoft.EntityFrameworkCore;
 
 namespace CarbonFiles.Api.Endpoints;
 
@@ -94,7 +92,7 @@ public static class FileEndpoints
 
         // PATCH /api/buckets/{id}/files/{*filePath}/content — Partial file update
         app.MapMethods("/api/buckets/{id}/files/{*filePath}", new[] { "PATCH" }, async (string id, string filePath, HttpContext ctx,
-            IFileService fileService, FileStorageService storageService, IBucketService bucketService, CarbonFilesDbContext db, ILoggerFactory loggerFactory) =>
+            IFileService fileService, FileStorageService storageService, IBucketService bucketService, IUploadTokenService uploadTokenService, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.FileEndpoints");
             // Only handle paths ending with /content
@@ -117,12 +115,9 @@ public static class FileEndpoints
                     return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key, admin key, or upload token." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
 
                 // Validate upload token
-                var uploadToken = await db.UploadTokens.FirstOrDefaultAsync(t => t.Token == token && t.BucketId == id);
-                if (uploadToken == null || uploadToken.ExpiresAt <= DateTime.UtcNow)
+                var (tokenBucketId, isValid) = await uploadTokenService.ValidateAsync(token);
+                if (!isValid || tokenBucketId != id)
                     return Results.Json(new ErrorResponse { Error = "Invalid or expired upload token" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
-
-                if (uploadToken.MaxUploads.HasValue && uploadToken.UploadsUsed >= uploadToken.MaxUploads.Value)
-                    return Results.Json(new ErrorResponse { Error = "Upload token has reached its maximum number of uploads" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
 
                 auth = AuthContext.Admin();
             }

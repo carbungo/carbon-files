@@ -1,7 +1,5 @@
 using CarbonFiles.Core.Configuration;
 using CarbonFiles.Core.Interfaces;
-using CarbonFiles.Infrastructure.Data;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -49,14 +47,12 @@ public sealed class CleanupService : BackgroundService
     internal async Task CleanupExpiredBucketsAsync(CancellationToken ct)
     {
         using var scope = _provider.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<CarbonFilesDbContext>();
+        var repo = scope.ServiceProvider.GetRequiredService<CleanupRepository>();
         var storage = scope.ServiceProvider.GetRequiredService<FileStorageService>();
         var cache = scope.ServiceProvider.GetRequiredService<ICacheService>();
 
         var now = DateTime.UtcNow;
-        var expired = await db.Buckets
-            .Where(b => b.ExpiresAt != null && b.ExpiresAt < now)
-            .ToListAsync(ct);
+        var expired = await repo.GetExpiredBucketsAsync(now, ct);
 
         if (expired.Count == 0) return;
 
@@ -74,13 +70,13 @@ public sealed class CleanupService : BackgroundService
             cache.InvalidateUploadTokensForBucket(bucket.Id);
 
             // Delete associated DB records
-            await db.Files.Where(f => f.BucketId == bucket.Id).ExecuteDeleteAsync(ct);
-            await db.ShortUrls.Where(s => s.BucketId == bucket.Id).ExecuteDeleteAsync(ct);
-            await db.UploadTokens.Where(t => t.BucketId == bucket.Id).ExecuteDeleteAsync(ct);
-            db.Buckets.Remove(bucket);
+            await repo.DeleteFilesForBucketAsync(bucket.Id, ct);
+            await repo.DeleteShortUrlsForBucketAsync(bucket.Id, ct);
+            await repo.DeleteUploadTokensForBucketAsync(bucket.Id, ct);
+            repo.RemoveBucket(bucket);
         }
 
-        await db.SaveChangesAsync(ct);
+        await repo.SaveChangesAsync(ct);
         cache.InvalidateStats();
         _logger.LogInformation("Cleaned up {Count} expired buckets", expired.Count);
     }

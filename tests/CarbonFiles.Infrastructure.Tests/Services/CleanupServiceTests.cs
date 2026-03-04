@@ -58,6 +58,7 @@ public class CleanupServiceTests : IDisposable
             opts.UseSqlite(_keepAliveConnection.ConnectionString));
         services.AddSingleton(new FileStorageService(cfOptions, NullLogger<FileStorageService>.Instance));
         services.AddSingleton<ICacheService>(new NullCacheService());
+        services.AddScoped<CleanupRepository>();
         _serviceProvider = services.BuildServiceProvider();
 
         _sut = new CleanupService(

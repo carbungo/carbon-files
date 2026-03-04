@@ -171,6 +171,29 @@ public sealed class BucketService : IBucketService
         return response;
     }
 
+    public async Task<Bucket?> GetBucketAsync(string id)
+    {
+        var entity = await _db.Buckets.FirstOrDefaultAsync(b => b.Id == id);
+        if (entity == null)
+            return null;
+
+        // Expired buckets are not accessible
+        if (entity.ExpiresAt.HasValue && entity.ExpiresAt.Value <= DateTime.UtcNow)
+            return null;
+
+        return entity.ToBucket();
+    }
+
+    public async Task<List<BucketFile>> GetAllFilesAsync(string id, CancellationToken ct = default)
+    {
+        var files = await _db.Files
+            .Where(f => f.BucketId == id)
+            .OrderBy(f => f.Path)
+            .ToListAsync(ct);
+
+        return files.Select(f => f.ToBucketFile()).ToList();
+    }
+
     public async Task<Bucket?> UpdateAsync(string id, UpdateBucketRequest request, AuthContext auth)
     {
         var entity = await _db.Buckets.FirstOrDefaultAsync(b => b.Id == id);

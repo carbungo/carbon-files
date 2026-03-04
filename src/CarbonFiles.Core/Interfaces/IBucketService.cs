@@ -9,6 +9,8 @@ public interface IBucketService
     Task<Bucket> CreateAsync(CreateBucketRequest request, AuthContext auth);
     Task<PaginatedResponse<Bucket>> ListAsync(PaginationParams pagination, AuthContext auth, bool includeExpired = false);
     Task<BucketDetailResponse?> GetByIdAsync(string id);
+    Task<Bucket?> GetBucketAsync(string id);
+    Task<List<BucketFile>> GetAllFilesAsync(string id, CancellationToken ct = default);
     Task<Bucket?> UpdateAsync(string id, UpdateBucketRequest request, AuthContext auth);
     Task<bool> DeleteAsync(string id, AuthContext auth);
     Task<string?> GetSummaryAsync(string id);

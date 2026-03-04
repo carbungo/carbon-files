@@ -5,10 +5,8 @@ using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Requests;
 using CarbonFiles.Core.Models.Responses;
-using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Services;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.EntityFrameworkCore;
 
 namespace CarbonFiles.Api.Endpoints;
 
@@ -161,18 +159,18 @@ public static class BucketEndpoints
         .WithDescription("Public. Returns a plaintext summary of the bucket suitable for LLM context or previews.");
 
         // GET|HEAD /api/buckets/{id}/zip — Download bucket as ZIP (public access)
-        group.MapMethods("/{id}/zip", new[] { "GET", "HEAD" }, async (string id, HttpContext ctx, CarbonFilesDbContext db, FileStorageService storage, ILoggerFactory loggerFactory) =>
+        group.MapMethods("/{id}/zip", new[] { "GET", "HEAD" }, async (string id, HttpContext ctx, IBucketService svc, FileStorageService storage, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.BucketEndpoints");
-            var bucket = await db.Buckets.FirstOrDefaultAsync(b => b.Id == id);
-            if (bucket == null || (bucket.ExpiresAt != null && bucket.ExpiresAt < DateTime.UtcNow))
+            var bucket = await svc.GetBucketAsync(id);
+            if (bucket == null)
                 return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
 
             // Log warning for large buckets
             if (bucket.FileCount > 10000 || bucket.TotalSize > 10L * 1024 * 1024 * 1024)
                 logger.LogWarning("Large bucket ZIP requested: {BucketId} ({FileCount} files, {TotalSize} bytes)", id, bucket.FileCount, bucket.TotalSize);
 
-            var files = await db.Files.Where(f => f.BucketId == id).OrderBy(f => f.Path).ToListAsync();
+            var files = await svc.GetAllFilesAsync(id);
 
             ctx.Response.ContentType = "application/zip";
             ctx.Response.Headers["Content-Disposition"] = $"attachment; filename=\"{bucket.Name}.zip\"";

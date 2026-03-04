@@ -56,8 +56,10 @@ public static class DependencyInjection
         services.AddScoped<IUploadService, UploadService>();
         services.AddScoped<IShortUrlService, ShortUrlService>();
         services.AddScoped<IUploadTokenService, UploadTokenService>();
+        services.AddScoped<IStatsService, StatsService>();
 
         // Background cleanup
+        services.AddScoped<CleanupRepository>();
         services.AddHostedService<CleanupService>();
 
         return services;
