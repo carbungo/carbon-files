@@ -1,3 +1,3 @@
 using Xunit;
 
-[assembly: CollectionBehavior(MaxParallelThreads = 0)]
+[assembly: CollectionBehavior(CollectionBehavior.CollectionPerClass, MaxParallelThreads = 0)]
