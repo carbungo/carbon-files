@@ -371,55 +371,6 @@ public sealed class FileService : IFileService
             });
     }
 
-    public async Task<bool> UpdateFileSizeAsync(string bucketId, string path, long newSize)
-    {
-        var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @path",
-            p =>
-            {
-                p.AddWithValue("@bucketId", bucketId);
-                p.AddWithValue("@path", path);
-            },
-            FileEntity.Read);
-        if (entity == null)
-            return false;
-
-        var oldSize = entity.Size;
-        var now = DateTime.UtcNow;
-
-        using var tx = _db.BeginTransaction();
-
-        await Db.ExecuteAsync(_db,
-            "UPDATE Files SET Size = @newSize, UpdatedAt = @now WHERE BucketId = @bucketId AND Path = @path",
-            p =>
-            {
-                p.AddWithValue("@newSize", newSize);
-                p.AddWithValue("@now", now);
-                p.AddWithValue("@bucketId", bucketId);
-                p.AddWithValue("@path", path);
-            }, tx);
-
-        // Update bucket total size
-        await Db.ExecuteAsync(_db,
-            "UPDATE Buckets SET TotalSize = MAX(0, TotalSize - @oldSize + @newSize) WHERE Id = @bucketId",
-            p =>
-            {
-                p.AddWithValue("@oldSize", oldSize);
-                p.AddWithValue("@newSize", newSize);
-                p.AddWithValue("@bucketId", bucketId);
-            }, tx);
-
-        tx.Commit();
-
-        _cache.InvalidateFile(bucketId, path);
-        _cache.InvalidateBucket(bucketId);
-        _cache.InvalidateStats();
-
-        _logger.LogDebug("Updated file size for {Path} in bucket {BucketId}: {OldSize} -> {NewSize}", path, bucketId, oldSize, newSize);
-
-        return true;
-    }
-
     public async Task<bool> PatchFileAsync(string bucketId, string path, Stream patchContent, long offset, bool append)
     {
         var entity = await Db.QueryFirstOrDefaultAsync(_db,

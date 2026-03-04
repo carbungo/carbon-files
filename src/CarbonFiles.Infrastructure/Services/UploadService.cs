@@ -235,12 +235,6 @@ public sealed class UploadService : IUploadService
         }
     }
 
-    public Task<long> GetStoredFileSizeAsync(string bucketId, string path)
-    {
-        var size = _storage.GetFileSize(bucketId, path);
-        return Task.FromResult(size);
-    }
-
     private static UploadedFile ToUploadedFile(string path, string name, long size, string mimeType,
         string? shortCode, string hash, bool deduplicated, DateTime createdAt, DateTime updatedAt) => new()
     {
