@@ -62,7 +62,7 @@ public sealed class ShortUrlService : IShortUrlService
     {
         var cached = _cache.GetShortUrl(code);
         if (cached != null)
-            return $"/api/buckets/{cached.Value.BucketId}/files/{cached.Value.FilePath}/content";
+            return $"/api/buckets/{cached.Value.BucketId}/files/{Uri.EscapeDataString(cached.Value.FilePath)}/content";
 
         var shortUrl = await Db.QueryFirstOrDefaultAsync(_db,
             "SELECT Code, BucketId, FilePath, CreatedAt FROM ShortUrls WHERE Code = @code",
@@ -89,7 +89,7 @@ public sealed class ShortUrlService : IShortUrlService
         }
 
         _cache.SetShortUrl(code, shortUrl.BucketId, shortUrl.FilePath);
-        return $"/api/buckets/{shortUrl.BucketId}/files/{shortUrl.FilePath}/content";
+        return $"/api/buckets/{shortUrl.BucketId}/files/{Uri.EscapeDataString(shortUrl.FilePath)}/content";
     }
 
     public async Task<bool> DeleteAsync(string code, AuthContext auth)
