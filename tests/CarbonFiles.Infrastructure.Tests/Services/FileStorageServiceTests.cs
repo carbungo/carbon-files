@@ -39,9 +39,9 @@ public class FileStorageServiceTests : IDisposable
         var data = "Hello, pipelined world!"u8.ToArray();
         using var stream = new MemoryStream(data);
 
-        var size = await _sut.StoreAsync("bucket01", "small.txt", stream, ct: TestContext.Current.CancellationToken);
+        var result = await _sut.StoreAsync("bucket01", "small.txt", stream, ct: TestContext.Current.CancellationToken);
 
-        size.Should().Be(data.Length);
+        result.Size.Should().Be(data.Length);
 
         var stored = await File.ReadAllBytesAsync(_sut.GetFilePath("bucket01", "small.txt"), TestContext.Current.CancellationToken);
         stored.Should().Equal(data);
@@ -52,9 +52,9 @@ public class FileStorageServiceTests : IDisposable
     {
         using var stream = new MemoryStream([]);
 
-        var size = await _sut.StoreAsync("bucket01", "empty.txt", stream, ct: TestContext.Current.CancellationToken);
+        var result = await _sut.StoreAsync("bucket01", "empty.txt", stream, ct: TestContext.Current.CancellationToken);
 
-        size.Should().Be(0);
+        result.Size.Should().Be(0);
         var stored = await File.ReadAllBytesAsync(_sut.GetFilePath("bucket01", "empty.txt"), TestContext.Current.CancellationToken);
         stored.Should().BeEmpty();
     }
@@ -67,9 +67,9 @@ public class FileStorageServiceTests : IDisposable
         Random.Shared.NextBytes(data);
         using var stream = new MemoryStream(data);
 
-        var size = await _sut.StoreAsync("bucket01", "large.bin", stream, ct: TestContext.Current.CancellationToken);
+        var result = await _sut.StoreAsync("bucket01", "large.bin", stream, ct: TestContext.Current.CancellationToken);
 
-        size.Should().Be(data.Length);
+        result.Size.Should().Be(data.Length);
 
         var stored = await File.ReadAllBytesAsync(_sut.GetFilePath("bucket01", "large.bin"), TestContext.Current.CancellationToken);
         stored.Should().Equal(data);
@@ -82,9 +82,9 @@ public class FileStorageServiceTests : IDisposable
         await _sut.StoreAsync("bucket01", "overwrite.txt", stream1, ct: TestContext.Current.CancellationToken);
 
         using var stream2 = new MemoryStream("version 2 is longer"u8.ToArray());
-        var size = await _sut.StoreAsync("bucket01", "overwrite.txt", stream2, ct: TestContext.Current.CancellationToken);
+        var result = await _sut.StoreAsync("bucket01", "overwrite.txt", stream2, ct: TestContext.Current.CancellationToken);
 
-        size.Should().Be("version 2 is longer"u8.ToArray().Length);
+        result.Size.Should().Be("version 2 is longer"u8.ToArray().Length);
         var stored = await File.ReadAllBytesAsync(_sut.GetFilePath("bucket01", "overwrite.txt"), TestContext.Current.CancellationToken);
         stored.Should().Equal("version 2 is longer"u8.ToArray());
     }
@@ -138,9 +138,9 @@ public class FileStorageServiceTests : IDisposable
         Random.Shared.NextBytes(data);
         using var stream = new MemoryStream(data);
 
-        var size = await _sut.StoreAsync("bucket01", "exact.bin", stream, maxSize: 512, ct: TestContext.Current.CancellationToken);
+        var result = await _sut.StoreAsync("bucket01", "exact.bin", stream, maxSize: 512, ct: TestContext.Current.CancellationToken);
 
-        size.Should().Be(512);
+        result.Size.Should().Be(512);
     }
 
     [Fact]
@@ -150,9 +150,9 @@ public class FileStorageServiceTests : IDisposable
         Random.Shared.NextBytes(data);
         using var stream = new MemoryStream(data);
 
-        var size = await _sut.StoreAsync("bucket01", "small.bin", stream, maxSize: 1024, ct: TestContext.Current.CancellationToken);
+        var result = await _sut.StoreAsync("bucket01", "small.bin", stream, maxSize: 1024, ct: TestContext.Current.CancellationToken);
 
-        size.Should().Be(256);
+        result.Size.Should().Be(256);
     }
 
     [Fact]
@@ -162,9 +162,9 @@ public class FileStorageServiceTests : IDisposable
         Random.Shared.NextBytes(data);
         using var stream = new MemoryStream(data);
 
-        var size = await _sut.StoreAsync("bucket01", "unlimited.bin", stream, maxSize: 0, ct: TestContext.Current.CancellationToken);
+        var result = await _sut.StoreAsync("bucket01", "unlimited.bin", stream, maxSize: 0, ct: TestContext.Current.CancellationToken);
 
-        size.Should().Be(data.Length);
+        result.Size.Should().Be(data.Length);
     }
 
     // ── Cancellation ────────────────────────────────────────────────────
@@ -193,9 +193,9 @@ public class FileStorageServiceTests : IDisposable
         Random.Shared.NextBytes(data);
         var stream = new ChunkedStream(data, chunkSize: 4096);
 
-        var size = await _sut.StoreAsync("bucket01", "chunked.bin", stream, ct: TestContext.Current.CancellationToken);
+        var result = await _sut.StoreAsync("bucket01", "chunked.bin", stream, ct: TestContext.Current.CancellationToken);
 
-        size.Should().Be(data.Length);
+        result.Size.Should().Be(data.Length);
         var stored = await File.ReadAllBytesAsync(_sut.GetFilePath("bucket01", "chunked.bin"), TestContext.Current.CancellationToken);
         stored.Should().Equal(data);
     }

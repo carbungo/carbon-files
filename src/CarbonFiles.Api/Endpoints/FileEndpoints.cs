@@ -11,29 +11,48 @@ public static class FileEndpoints
 {
     public static void MapFileEndpoints(this IEndpointRouteBuilder app)
     {
-        // GET /api/buckets/{id}/files — List files (public, paginated)
+        // GET /api/buckets/{id}/files — List files (public, paginated or tree mode)
         app.MapGet("/api/buckets/{id}/files", async (string id, IFileService fileService, IBucketService bucketService,
-            int limit = 50, int offset = 0, string sort = "created_at", string order = "desc") =>
+            string? delimiter, string? prefix, string? cursor,
+            int? limit, int? offset, string? sort, string? order) =>
         {
-            var bucket = await bucketService.GetByIdAsync(id);
+            var bucket = await bucketService.GetBucketAsync(id);
             if (bucket == null)
                 return ApiResults.NotFound("Bucket not found");
 
-            var result = await fileService.ListAsync(id,
-                new PaginationParams { Limit = limit, Offset = offset, Sort = sort, Order = order });
-            return Results.Ok(result);
+            if (delimiter != null)
+            {
+                // Tree mode
+                var treeLimit = Math.Clamp(limit ?? 100, 1, 1000);
+                var result = await fileService.ListTreeAsync(id, prefix, delimiter, treeLimit, cursor);
+                return Results.Ok(result);
+            }
+            else
+            {
+                // Flat mode (existing behavior)
+                var pagination = new PaginationParams
+                {
+                    Limit = Math.Clamp(limit ?? 50, 1, 1000),
+                    Offset = Math.Max(offset ?? 0, 0),
+                    Sort = sort ?? "created_at",
+                    Order = order ?? "desc"
+                };
+                var result = await fileService.ListAsync(id, pagination);
+                return Results.Ok(result);
+            }
         })
         .Produces<PaginatedResponse<BucketFile>>(200)
+        .Produces<FileTreeResponse>(200)
         .Produces<ErrorResponse>(404)
         .WithTags("Files")
         .WithSummary("List files in bucket")
-        .WithDescription("Public. Returns a paginated list of files in the specified bucket.");
+        .WithDescription("Public. Returns a paginated list of files, or tree structure with ?delimiter=/&prefix=.");
 
         // GET /api/buckets/{id}/ls — List directory contents (public)
         app.MapGet("/api/buckets/{id}/ls", async (string id, IFileService fileService, IBucketService bucketService,
             string path = "", int limit = 200, int offset = 0, string sort = "name", string order = "asc") =>
         {
-            var bucket = await bucketService.GetByIdAsync(id);
+            var bucket = await bucketService.GetBucketAsync(id);
             if (bucket == null)
                 return ApiResults.NotFound("Bucket not found");
 
@@ -47,19 +66,27 @@ public static class FileEndpoints
         .WithSummary("List directory contents")
         .WithDescription("Public. Returns files and folder names at a specific path level within the bucket.");
 
-        // GET|HEAD /api/buckets/{id}/files/{*filePath} — File metadata or content download
+        // GET|HEAD /api/buckets/{id}/files/{*filePath} — File metadata, content download, or verify
         app.MapMethods("/api/buckets/{id}/files/{*filePath}", new[] { "GET", "HEAD" },
             async (string id, string filePath, HttpContext ctx,
             IFileService fileService, FileStorageService storageService, IBucketService bucketService) =>
         {
-            var bucket = await bucketService.GetByIdAsync(id);
+            var bucket = await bucketService.GetBucketAsync(id);
             if (bucket == null)
                 return ApiResults.NotFound("Bucket not found");
 
             if (filePath.EndsWith("/content", StringComparison.OrdinalIgnoreCase))
             {
                 var actualPath = filePath[..^"/content".Length];
-                return await ServeFileContent(id, actualPath, ctx, fileService, storageService);
+                var contentStorageService = ctx.RequestServices.GetRequiredService<ContentStorageService>();
+                return await ServeFileContent(id, actualPath, ctx, fileService, storageService, contentStorageService);
+            }
+
+            if (filePath.EndsWith("/verify", StringComparison.OrdinalIgnoreCase))
+            {
+                var actualPath = filePath[..^"/verify".Length];
+                var verifyResult = await fileService.VerifyAsync(id, actualPath);
+                return verifyResult == null ? ApiResults.NotFound("File not found") : Results.Ok(verifyResult);
             }
 
             var meta = await fileService.GetMetadataAsync(id, filePath);
@@ -81,7 +108,7 @@ public static class FileEndpoints
             IFileService fileService, IBucketService bucketService, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.FileEndpoints");
-            var bucket = await bucketService.GetByIdAsync(id);
+            var bucket = await bucketService.GetBucketAsync(id);
             if (bucket == null)
                 return ApiResults.NotFound("Bucket not found");
 
@@ -112,7 +139,7 @@ public static class FileEndpoints
 
             var actualPath = filePath[..^"/content".Length];
 
-            var bucket = await bucketService.GetByIdAsync(id);
+            var bucket = await bucketService.GetBucketAsync(id);
             if (bucket == null)
                 return ApiResults.NotFound("Bucket not found");
 
@@ -157,11 +184,9 @@ public static class FileEndpoints
                     return ApiResults.Error("Range not satisfiable", 416);
             }
 
-            var newSize = await storageService.PatchFileAsync(id, actualPath, ctx.Request.Body, offset, isAppend);
-            if (newSize < 0)
+            var patched = await fileService.PatchFileAsync(id, actualPath, ctx.Request.Body, offset, isAppend);
+            if (!patched)
                 return Results.NotFound();
-
-            await fileService.UpdateFileSizeAsync(id, actualPath, newSize);
 
             logger.LogInformation("File {FilePath} patched in bucket {BucketId}", actualPath, id);
             return Results.Ok(await fileService.GetMetadataAsync(id, actualPath));
@@ -177,13 +202,27 @@ public static class FileEndpoints
     }
 
     private static async Task<IResult> ServeFileContent(string bucketId, string path, HttpContext ctx,
-        IFileService fileService, FileStorageService storageService)
+        IFileService fileService, FileStorageService storageService, ContentStorageService contentStorageService)
     {
         var meta = await fileService.GetMetadataAsync(bucketId, path);
         if (meta == null)
             return ApiResults.NotFound("File not found");
 
-        var etag = $"\"{meta.Size}-{meta.UpdatedAt.Ticks}\"";
+        string physicalPath;
+        string etag;
+        if (meta.Sha256 != null)
+        {
+            var diskPath = await fileService.GetContentDiskPathAsync(bucketId, path);
+            if (diskPath == null) return ApiResults.NotFound("File not found");
+            physicalPath = contentStorageService.GetFullPath(diskPath);
+            etag = $"\"{meta.Sha256}\"";
+        }
+        else
+        {
+            physicalPath = storageService.GetFilePath(bucketId, path);
+            etag = $"\"{meta.Size}-{meta.UpdatedAt.Ticks}\"";
+        }
+
         var lastModified = meta.UpdatedAt;
 
         if (ctx.Request.Headers.IfNoneMatch.FirstOrDefault() == etag)
@@ -198,7 +237,6 @@ public static class FileEndpoints
             }
         }
 
-        var physicalPath = storageService.GetFilePath(bucketId, path);
         if (!System.IO.File.Exists(physicalPath))
             return ApiResults.NotFound("File not found");
 

@@ -338,4 +338,165 @@ public class FileEndpointTests : IntegrationTestBase
             fileInfo.GetProperty("mime_type").GetString().Should().Be(expectedMime, $"because {fileName} should be {expectedMime}");
         }
     }
+
+    // ── Tree Mode (/files?delimiter=/) ──────────────────────────────────
+
+    [Fact]
+    public async Task ListFiles_WithDelimiter_ReturnsTreeStructure()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        await UploadFileAsync(client, bucketId, "readme.md", "root file");
+        await UploadFileAsync(client, bucketId, "src/main.cs", "main");
+        await UploadFileAsync(client, bucketId, "src/utils/helper.cs", "helper");
+        await UploadFileAsync(client, bucketId, "src/utils/other.cs", "other");
+        await UploadFileAsync(client, bucketId, "docs/guide.md", "guide");
+
+        var response = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files?delimiter=/",
+            TestContext.Current.CancellationToken);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await ParseJsonAsync(response);
+
+        json.GetProperty("files").GetArrayLength().Should().Be(1);
+        json.GetProperty("files")[0].GetProperty("path").GetString().Should().Be("readme.md");
+        json.GetProperty("directories").GetArrayLength().Should().Be(2);
+        json.GetProperty("delimiter").GetString().Should().Be("/");
+    }
+
+    [Fact]
+    public async Task ListFiles_WithDelimiterAndPrefix_ReturnsScoped()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        await UploadFileAsync(client, bucketId, "src/main.cs", "main");
+        await UploadFileAsync(client, bucketId, "src/utils/helper.cs", "helper");
+        await UploadFileAsync(client, bucketId, "src/utils/other.cs", "other");
+
+        var response = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files?delimiter=/&prefix=src/",
+            TestContext.Current.CancellationToken);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await ParseJsonAsync(response);
+
+        json.GetProperty("prefix").GetString().Should().Be("src/");
+        json.GetProperty("files").GetArrayLength().Should().Be(1);
+        json.GetProperty("directories").GetArrayLength().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ListFiles_WithDelimiterDeepPrefix_ReturnsLeafFiles()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        await UploadFileAsync(client, bucketId, "src/utils/helper.cs", "helper");
+        await UploadFileAsync(client, bucketId, "src/utils/other.cs", "other");
+
+        var response = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files?delimiter=/&prefix=src/utils/",
+            TestContext.Current.CancellationToken);
+        var json = await ParseJsonAsync(response);
+
+        json.GetProperty("files").GetArrayLength().Should().Be(2);
+        json.GetProperty("directories").GetArrayLength().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ListFiles_NoDelimiter_ReturnsFlatList()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        await UploadFileAsync(client, bucketId, "src/main.cs", "main");
+        await UploadFileAsync(client, bucketId, "docs/guide.md", "guide");
+
+        var response = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files",
+            TestContext.Current.CancellationToken);
+        var json = await ParseJsonAsync(response);
+
+        json.GetProperty("items").GetArrayLength().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ListFiles_TreeMode_DirectoriesHaveStats()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        await UploadFileAsync(client, bucketId, "src/a.txt", "aaa");
+        await UploadFileAsync(client, bucketId, "src/b.txt", "bbb");
+
+        var response = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files?delimiter=/",
+            TestContext.Current.CancellationToken);
+        var json = await ParseJsonAsync(response);
+
+        var dir = json.GetProperty("directories")[0];
+        dir.GetProperty("path").GetString().Should().Be("src/");
+        dir.GetProperty("file_count").GetInt32().Should().Be(2);
+        dir.GetProperty("total_size").GetInt64().Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task ListFiles_TreeModeCursorPagination()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        for (int i = 0; i < 5; i++)
+            await UploadFileAsync(client, bucketId, $"file{i:D2}.txt", $"content{i}");
+
+        var response = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files?delimiter=/&limit=2",
+            TestContext.Current.CancellationToken);
+        var json = await ParseJsonAsync(response);
+
+        json.GetProperty("files").GetArrayLength().Should().Be(2);
+        var cursor = json.GetProperty("cursor").GetString();
+        cursor.Should().NotBeNull();
+
+        var response2 = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files?delimiter=/&limit=2&cursor={cursor}",
+            TestContext.Current.CancellationToken);
+        var json2 = await ParseJsonAsync(response2);
+
+        json2.GetProperty("files").GetArrayLength().Should().Be(2);
+    }
+
+    // ── Verify Endpoint ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task VerifyFile_ValidContent_ReturnsValid()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+        await UploadFileAsync(client, bucketId, "test.txt", "verify me");
+
+        var response = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files/test.txt/verify",
+            TestContext.Current.CancellationToken);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await ParseJsonAsync(response);
+
+        json.GetProperty("path").GetString().Should().Be("test.txt");
+        json.GetProperty("valid").GetBoolean().Should().BeTrue();
+        json.GetProperty("stored_hash").GetString()
+            .Should().Be(json.GetProperty("computed_hash").GetString());
+    }
+
+    [Fact]
+    public async Task VerifyFile_NonexistentFile_Returns404()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        var response = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files/nope.txt/verify",
+            TestContext.Current.CancellationToken);
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
 }

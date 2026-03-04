@@ -54,7 +54,7 @@ public static class UploadEndpoints
 
             // Stream sections directly from the request body — no buffering
             var reader = new MultipartReader(boundary, ctx.Request.Body);
-            var uploaded = new List<BucketFile>();
+            var uploaded = new List<UploadedFile>();
             var maxUploadSize = options.Value.MaxUploadSize;
 
             MultipartSection? section;
@@ -82,7 +82,15 @@ public static class UploadEndpoints
 
                 try
                 {
-                    // Pipelined: network reads and disk writes run concurrently via System.IO.Pipelines
+                    path = CarbonFiles.Core.Utilities.PathNormalizer.Normalize(path);
+                }
+                catch (ArgumentException)
+                {
+                    return ApiResults.BadRequest("Invalid file path");
+                }
+
+                try
+                {
                     var result = await uploadService.StoreFileAsync(id, path, section.Body, auth, maxUploadSize, ctx.RequestAborted);
                     uploaded.Add(result);
                 }
@@ -142,9 +150,18 @@ public static class UploadEndpoints
             if (string.IsNullOrEmpty(filename))
                 return ApiResults.BadRequest("filename query parameter is required");
 
+            try
+            {
+                filename = CarbonFiles.Core.Utilities.PathNormalizer.Normalize(filename);
+            }
+            catch (ArgumentException)
+            {
+                return ApiResults.BadRequest("Invalid file path");
+            }
+
             var maxUploadSize = options.Value.MaxUploadSize;
 
-            BucketFile result;
+            UploadedFile result;
             try
             {
                 result = await uploadService.StoreFileAsync(id, filename, ctx.Request.Body, auth, maxUploadSize, ctx.RequestAborted);

@@ -29,6 +29,17 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS "IX_Buckets_ExpiresAt" ON "Buckets" ("ExpiresAt");
         CREATE INDEX IF NOT EXISTS "IX_Buckets_Owner" ON "Buckets" ("Owner");
 
+        CREATE TABLE IF NOT EXISTS "ContentObjects" (
+            "Hash" TEXT NOT NULL CONSTRAINT "PK_ContentObjects" PRIMARY KEY,
+            "Size" INTEGER NOT NULL,
+            "DiskPath" TEXT NOT NULL,
+            "RefCount" INTEGER NOT NULL DEFAULT 1,
+            "CreatedAt" TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS "IX_ContentObjects_Orphans"
+            ON "ContentObjects" ("RefCount") WHERE "RefCount" = 0;
+
         CREATE TABLE IF NOT EXISTS "Files" (
             "BucketId" TEXT NOT NULL,
             "Path" TEXT NOT NULL,
@@ -36,6 +47,7 @@ public static class DatabaseInitializer
             "Size" INTEGER NOT NULL DEFAULT 0,
             "MimeType" TEXT NOT NULL,
             "ShortCode" TEXT NULL,
+            "ContentHash" TEXT NULL,
             "CreatedAt" TEXT NOT NULL,
             "UpdatedAt" TEXT NOT NULL,
             CONSTRAINT "PK_Files" PRIMARY KEY ("BucketId", "Path")
@@ -43,6 +55,7 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS "IX_Files_BucketId" ON "Files" ("BucketId");
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_Files_ShortCode" ON "Files" ("ShortCode") WHERE "ShortCode" IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS "IX_Files_ContentHash" ON "Files" ("ContentHash");
 
         CREATE TABLE IF NOT EXISTS "ApiKeys" (
             "Prefix" TEXT NOT NULL CONSTRAINT "PK_ApiKeys" PRIMARY KEY,

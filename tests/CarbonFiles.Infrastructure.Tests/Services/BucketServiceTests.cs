@@ -336,13 +336,13 @@ public class BucketServiceTests : IDisposable
             "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
             p => { p.AddWithValue("@BucketId", "get0000001"); p.AddWithValue("@Path", "hello.txt"); p.AddWithValue("@Name", "hello.txt"); p.AddWithValue("@Size", 512L); p.AddWithValue("@MimeType", "text/plain"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
 
-        var result = await _sut.GetByIdAsync("get0000001");
+        var result = await _sut.GetByIdAsync("get0000001", includeFiles: true);
 
         result.Should().NotBeNull();
         result!.Id.Should().Be("get0000001");
         result.Name.Should().Be("get-test");
         result.Files.Should().HaveCount(1);
-        result.Files[0].Path.Should().Be("hello.txt");
+        result.Files![0].Path.Should().Be("hello.txt");
         result.HasMoreFiles.Should().BeFalse();
     }
 
@@ -384,7 +384,7 @@ public class BucketServiceTests : IDisposable
                 p => { p.AddWithValue("@BucketId", "many000001"); p.AddWithValue("@Path", $"file{i:D4}.txt"); p.AddWithValue("@Name", $"file{i:D4}.txt"); p.AddWithValue("@Size", 100L); p.AddWithValue("@MimeType", "text/plain"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
         }
 
-        var result = await _sut.GetByIdAsync("many000001");
+        var result = await _sut.GetByIdAsync("many000001", includeFiles: true);
 
         result.Should().NotBeNull();
         result!.Files.Should().HaveCount(100);

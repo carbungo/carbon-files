@@ -382,6 +382,126 @@ public class UploadEndpointTests : IntegrationTestBase
         downloaded.Should().Be(fileContent);
     }
 
+    // ── CAS Deduplication ──────────────────────────────────────────────
+
+    private async Task<JsonElement> UploadFileAsync(HttpClient client, string bucketId, string fileName, string content)
+    {
+        using var form = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(Encoding.UTF8.GetBytes(content));
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        form.Add(fileContent, "file", fileName);
+        var response = await client.PostAsync($"/api/buckets/{bucketId}/upload", form,
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await ParseJsonAsync(response);
+        return body.GetProperty("uploaded")[0].Clone();
+    }
+
+    [Fact]
+    public async Task Upload_ReturnsSha256Hash()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+        var file = await UploadFileAsync(client, bucketId, "test.txt", "hello world");
+
+        file.GetProperty("sha256").GetString().Should().NotBeNullOrEmpty();
+        file.GetProperty("sha256").GetString()!.Length.Should().Be(64);
+    }
+
+    [Fact]
+    public async Task Upload_IdenticalContent_Deduplicates()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        var file1 = await UploadFileAsync(client, bucketId, "file1.txt", "identical content");
+        var file2 = await UploadFileAsync(client, bucketId, "file2.txt", "identical content");
+
+        file1.GetProperty("sha256").GetString().Should().Be(file2.GetProperty("sha256").GetString());
+        file2.GetProperty("deduplicated").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Upload_DifferentContent_NoDeduplicate()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        var file1 = await UploadFileAsync(client, bucketId, "a.txt", "content A");
+        var file2 = await UploadFileAsync(client, bucketId, "b.txt", "content B");
+
+        file1.GetProperty("sha256").GetString().Should().NotBe(file2.GetProperty("sha256").GetString());
+        file2.GetProperty("deduplicated").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Upload_SamePathOverwrite_UpdatesHash()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        await UploadFileAsync(client, bucketId, "file.txt", "version 1");
+        var file2 = await UploadFileAsync(client, bucketId, "file.txt", "version 2");
+
+        file2.GetProperty("sha256").GetString().Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Upload_CrossBucketDedup()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucket1 = await CreateBucketAsync(client);
+        var bucket2 = await CreateBucketAsync(client);
+
+        var file1 = await UploadFileAsync(client, bucket1, "shared.txt", "shared content");
+        var file2 = await UploadFileAsync(client, bucket2, "copy.txt", "shared content");
+
+        file1.GetProperty("sha256").GetString().Should().Be(file2.GetProperty("sha256").GetString());
+        file2.GetProperty("deduplicated").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Delete_DecreasesRefCount_ContentSurvivesIfShared()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        await UploadFileAsync(client, bucketId, "file1.txt", "shared content for delete");
+        await UploadFileAsync(client, bucketId, "file2.txt", "shared content for delete");
+
+        var deleteResponse = await client.DeleteAsync(
+            $"/api/buckets/{bucketId}/files/file1.txt",
+            TestContext.Current.CancellationToken);
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var downloadResponse = await client.GetAsync(
+            $"/api/buckets/{bucketId}/files/file2.txt/content",
+            TestContext.Current.CancellationToken);
+        downloadResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await downloadResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        body.Should().Be("shared content for delete");
+    }
+
+    [Fact]
+    public async Task Delete_LastReference_CrossBucket_ContentSurvives()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucket1 = await CreateBucketAsync(client);
+        var bucket2 = await CreateBucketAsync(client);
+
+        await UploadFileAsync(client, bucket1, "file.txt", "unique content for delete test");
+        await UploadFileAsync(client, bucket2, "file.txt", "unique content for delete test");
+
+        await client.DeleteAsync($"/api/buckets/{bucket1}/files/file.txt",
+            TestContext.Current.CancellationToken);
+
+        var response = await client.GetAsync($"/api/buckets/{bucket2}/files/file.txt/content",
+            TestContext.Current.CancellationToken);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ── Custom Field Name ───────────────────────────────────────────────
+
     [Fact]
     public async Task MultipartUpload_CustomFieldNameWithSlashes_UsesFieldNameAsPath()
     {
@@ -397,5 +517,41 @@ public class UploadEndpointTests : IntegrationTestBase
         var file = body.GetProperty("uploaded")[0];
         file.GetProperty("path").GetString().Should().Be("config/app/settings.json");
         file.GetProperty("name").GetString().Should().Be("settings.json");
+    }
+
+    // ── Path Normalization ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task Upload_NormalizesBackslashPath()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        using var form = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(Encoding.UTF8.GetBytes("content"));
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        form.Add(fileContent, "src\\utils\\helper.cs", "helper.cs");
+        var response = await client.PostAsync($"/api/buckets/{bucketId}/upload", form,
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var body = await ParseJsonAsync(response);
+        var path = body.GetProperty("uploaded")[0].GetProperty("path").GetString();
+
+        path.Should().Be("src/utils/helper.cs");
+    }
+
+    [Fact]
+    public async Task Upload_PathTraversal_Returns400()
+    {
+        var client = Fixture.CreateAdminClient();
+        var bucketId = await CreateBucketAsync(client);
+
+        using var form = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(Encoding.UTF8.GetBytes("content"));
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        form.Add(fileContent, "../etc/passwd", "passwd");
+        var response = await client.PostAsync($"/api/buckets/{bucketId}/upload", form,
+            TestContext.Current.CancellationToken);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }

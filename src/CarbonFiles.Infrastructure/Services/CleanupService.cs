@@ -30,6 +30,7 @@ public sealed class CleanupService : BackgroundService
             try
             {
                 await CleanupExpiredBucketsAsync(stoppingToken);
+                await CleanupOrphanedContentAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -74,5 +75,27 @@ public sealed class CleanupService : BackgroundService
         }
         cache.InvalidateStats();
         _logger.LogInformation("Cleaned up {Count} expired buckets", expired.Count);
+    }
+
+    internal async Task CleanupOrphanedContentAsync(CancellationToken ct)
+    {
+        using var scope = _provider.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<CleanupRepository>();
+        var contentStorage = scope.ServiceProvider.GetRequiredService<ContentStorageService>();
+
+        var cutoff = DateTime.UtcNow.AddHours(-1);
+        var orphans = await repo.GetOrphanedContentAsync(cutoff, ct);
+
+        if (orphans.Count == 0) return;
+
+        _logger.LogInformation("Cleaning up {Count} orphaned content objects", orphans.Count);
+
+        foreach (var orphan in orphans)
+        {
+            contentStorage.Delete(orphan.DiskPath);
+            await repo.DeleteContentObjectAsync(orphan.Hash, ct);
+        }
+
+        _logger.LogInformation("Cleaned up {Count} orphaned content objects", orphans.Count);
     }
 }

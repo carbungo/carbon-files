@@ -241,8 +241,9 @@ public class BucketEndpointTests : IntegrationTestBase
         var body = await ParseJsonAsync(response);
         body.GetProperty("id").GetString().Should().Be(bucketId);
         body.GetProperty("name").GetString().Should().Be("get-test");
-        body.GetProperty("files").GetArrayLength().Should().Be(0);
-        body.GetProperty("has_more_files").GetBoolean().Should().BeFalse();
+        body.TryGetProperty("files", out _).Should().BeFalse();
+        body.GetProperty("unique_content_count").GetInt32().Should().Be(0);
+        body.GetProperty("unique_content_size").GetInt64().Should().Be(0);
     }
 
     [Fact]

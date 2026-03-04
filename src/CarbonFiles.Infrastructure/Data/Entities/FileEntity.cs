@@ -10,6 +10,7 @@ public sealed class FileEntity
     public long Size { get; set; }
     public required string MimeType { get; set; }
     public string? ShortCode { get; set; }
+    public string? ContentHash { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
@@ -21,6 +22,7 @@ public sealed class FileEntity
         Size = r.GetInt64(r.GetOrdinal("Size")),
         MimeType = r.GetString(r.GetOrdinal("MimeType")),
         ShortCode = r.IsDBNull(r.GetOrdinal("ShortCode")) ? null : r.GetString(r.GetOrdinal("ShortCode")),
+        ContentHash = r.IsDBNull(r.GetOrdinal("ContentHash")) ? null : r.GetString(r.GetOrdinal("ContentHash")),
         CreatedAt = r.GetDateTime(r.GetOrdinal("CreatedAt")),
         UpdatedAt = r.GetDateTime(r.GetOrdinal("UpdatedAt")),
     };

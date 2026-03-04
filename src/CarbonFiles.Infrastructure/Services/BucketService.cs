@@ -182,7 +182,7 @@ public sealed class BucketService : IBucketService
         return entity;
     }
 
-    public async Task<BucketDetailResponse?> GetByIdAsync(string id)
+    public async Task<BucketDetailResponse?> GetByIdAsync(string id, bool includeFiles = false)
     {
         var cached = _cache.GetBucket(id);
         if (cached != null)
@@ -192,13 +192,26 @@ public sealed class BucketService : IBucketService
         if (entity == null)
             return null;
 
-        var files = await Db.QueryAsync(_db,
-            "SELECT * FROM Files WHERE BucketId = @id ORDER BY Path LIMIT 101",
-            p => p.AddWithValue("@id", id),
-            FileEntity.Read);
+        // Dedup stats
+        var uniqueContentCount = await Db.ExecuteScalarAsync<int>(_db,
+            "SELECT COUNT(DISTINCT ContentHash) FROM Files WHERE BucketId = @id AND ContentHash IS NOT NULL",
+            p => p.AddWithValue("@id", id));
+        var uniqueContentSize = await Db.ExecuteScalarAsync<long>(_db,
+            "SELECT COALESCE(SUM(co.Size), 0) FROM ContentObjects co WHERE co.Hash IN (SELECT DISTINCT ContentHash FROM Files WHERE BucketId = @id AND ContentHash IS NOT NULL)",
+            p => p.AddWithValue("@id", id));
 
-        var hasMore = files.Count > 100;
-        var fileList = files.Take(100).Select(f => f.ToBucketFile()).ToList();
+        IReadOnlyList<BucketFile>? fileList = null;
+        bool? hasMore = null;
+
+        if (includeFiles)
+        {
+            var files = await Db.QueryAsync(_db,
+                "SELECT * FROM Files WHERE BucketId = @id ORDER BY Path LIMIT 101",
+                p => p.AddWithValue("@id", id),
+                FileEntity.Read);
+            hasMore = files.Count > 100;
+            fileList = files.Take(100).Select(f => f.ToBucketFile()).ToList();
+        }
 
         var response = new BucketDetailResponse
         {
@@ -211,6 +224,8 @@ public sealed class BucketService : IBucketService
             LastUsedAt = entity.LastUsedAt,
             FileCount = entity.FileCount,
             TotalSize = entity.TotalSize,
+            UniqueContentCount = uniqueContentCount,
+            UniqueContentSize = uniqueContentSize,
             Files = fileList,
             HasMoreFiles = hasMore
         };

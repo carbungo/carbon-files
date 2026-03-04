@@ -11,6 +11,8 @@ public sealed class FileStorageService
     private readonly string _dataDir;
     private readonly ILogger<FileStorageService> _logger;
 
+    public sealed record StoreResult(long Size, string Sha256Hash);
+
     public FileStorageService(IOptions<CarbonFilesOptions> options, ILogger<FileStorageService> logger)
     {
         _dataDir = options.Value.DataDir;
@@ -28,7 +30,7 @@ public sealed class FileStorageService
     /// run concurrently. The pipe provides backpressure — if disk is slow, network
     /// reads pause automatically via the pause/resume thresholds.
     /// </summary>
-    public async Task<long> StoreAsync(string bucketId, string filePath, Stream content, long maxSize = 0, CancellationToken ct = default)
+    public async Task<StoreResult> StoreAsync(string bucketId, string filePath, Stream content, long maxSize = 0, CancellationToken ct = default)
     {
         var targetPath = GetFilePath(bucketId, filePath);
         var dir = Path.GetDirectoryName(targetPath)!;
@@ -36,13 +38,16 @@ public sealed class FileStorageService
 
         var tempPath = $"{targetPath}.tmp.{Guid.NewGuid():N}";
 
+        using var sha256 = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+
         var pipe = new Pipe(new PipeOptions(
-            pauseWriterThreshold: 1024 * 1024,    // Pause network reads when 1MB buffered
-            resumeWriterThreshold: 512 * 1024,     // Resume when buffer drops to 512KB
-            minimumSegmentSize: 128 * 1024,        // 128KB segments
+            pauseWriterThreshold: 1024 * 1024,
+            resumeWriterThreshold: 512 * 1024,
+            minimumSegmentSize: 128 * 1024,
             useSynchronizationContext: false));
 
-        var fillTask = FillPipeFromStreamAsync(pipe.Writer, content, maxSize, ct);
+        var fillTask = FillPipeFromStreamAsync(pipe.Writer, content, maxSize, sha256, ct);
         var drainTask = DrainPipeToFileAsync(pipe.Reader, tempPath, ct);
 
         long totalBytes;
@@ -54,24 +59,71 @@ public sealed class FileStorageService
         catch
         {
             try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
-            // Surface the root-cause exception from the fill task (e.g. FileTooLargeException)
             if (fillTask.IsFaulted)
                 throw fillTask.Exception!.InnerException!;
             throw;
         }
 
+        var hashHex = Convert.ToHexStringLower(sha256.GetHashAndReset());
+
         File.Move(tempPath, targetPath, overwrite: true);
-        _logger.LogDebug("Stored {Size} bytes to {Path}", totalBytes, targetPath);
-        return totalBytes;
+        _logger.LogDebug("Stored {Size} bytes to {Path} (sha256={Hash})", totalBytes, targetPath, hashHex);
+        return new StoreResult(totalBytes, hashHex);
+    }
+
+    /// <summary>
+    /// Streams content to a temp file, computing SHA256 inline.
+    /// Returns the temp file path, size, and hash. Caller is responsible for
+    /// moving or deleting the temp file.
+    /// </summary>
+    public async Task<(string TempPath, long Size, string Sha256Hash)> StoreToTempAsync(
+        Stream content, long maxSize = 0, CancellationToken ct = default)
+    {
+        var tempDir = Path.Combine(_dataDir, "tmp");
+        Directory.CreateDirectory(tempDir);
+        var tempPath = Path.Combine(tempDir, $"{Guid.NewGuid():N}.tmp");
+
+        using var sha256 = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+
+        var pipe = new Pipe(new PipeOptions(
+            pauseWriterThreshold: 1024 * 1024,
+            resumeWriterThreshold: 512 * 1024,
+            minimumSegmentSize: 128 * 1024,
+            useSynchronizationContext: false));
+
+        var fillTask = FillPipeFromStreamAsync(pipe.Writer, content, maxSize, sha256, ct);
+        var drainTask = DrainPipeToFileAsync(pipe.Reader, tempPath, ct);
+
+        long totalBytes;
+        try
+        {
+            await Task.WhenAll(fillTask, drainTask);
+            totalBytes = fillTask.Result;
+        }
+        catch
+        {
+            try { File.Delete(tempPath); } catch { /* best-effort */ }
+            if (fillTask.IsFaulted)
+                throw fillTask.Exception!.InnerException!;
+            throw;
+        }
+
+        var hashHex = Convert.ToHexStringLower(sha256.GetHashAndReset());
+        _logger.LogDebug("Stored {Size} bytes to temp {Path} (sha256={Hash})", totalBytes, tempPath, hashHex);
+        return (tempPath, totalBytes, hashHex);
     }
 
     /// <summary>
     /// Network → Pipe: reads from the source stream into the pipe writer.
     /// Returns total bytes read. Throws FileTooLargeException if maxSize exceeded.
     /// </summary>
-    private static async Task<long> FillPipeFromStreamAsync(PipeWriter writer, Stream source, long maxSize, CancellationToken ct)
+    private static async Task<long> FillPipeFromStreamAsync(
+        PipeWriter writer, Stream source, long maxSize,
+        System.Security.Cryptography.IncrementalHash hash,
+        CancellationToken ct)
     {
-        const int MinimumReadSize = 128 * 1024; // 128KB read chunks
+        const int MinimumReadSize = 128 * 1024;
         long totalBytes = 0;
 
         try
@@ -87,6 +139,7 @@ public sealed class FileStorageService
                 if (maxSize > 0 && totalBytes > maxSize)
                     throw new FileTooLargeException(maxSize);
 
+                hash.AppendData(memory.Span[..bytesRead]);
                 writer.Advance(bytesRead);
 
                 var flush = await writer.FlushAsync(ct);
@@ -153,30 +206,6 @@ public sealed class FileStorageService
     {
         var path = GetFilePath(bucketId, filePath);
         return File.Exists(path);
-    }
-
-    public async Task<long> PatchFileAsync(string bucketId, string filePath, Stream content, long offset, bool append)
-    {
-        var path = GetFilePath(bucketId, filePath);
-        if (!File.Exists(path))
-            return -1;
-
-        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None, 81920);
-
-        if (append)
-        {
-            fs.Seek(0, SeekOrigin.End);
-        }
-        else
-        {
-            fs.Seek(offset, SeekOrigin.Begin);
-        }
-
-        await content.CopyToAsync(fs);
-
-        _logger.LogDebug("Patched file at {Path} (append={Append}, offset={Offset}, new size={NewSize})", path, append, offset, fs.Length);
-
-        return fs.Length;
     }
 
     public void DeleteFile(string bucketId, string filePath)

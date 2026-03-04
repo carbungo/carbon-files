@@ -99,7 +99,7 @@ public class AotSmokeTests : IntegrationTestBase
         var getBucketResponse = await Fixture.Client.GetAsync($"/api/buckets/{bucketId}", TestContext.Current.CancellationToken);
         getBucketResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var detailJson = await getBucketResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        detailJson.Should().Contain("\"files\"").And.Contain("\"has_more_files\"");
+        detailJson.Should().Contain("\"unique_content_count\"").And.Contain("\"unique_content_size\"");
 
         // Update bucket
         var updateResponse = await keyClient.PatchAsync($"/api/buckets/{bucketId}",
