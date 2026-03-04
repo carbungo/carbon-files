@@ -1,6 +1,6 @@
 # @carbonfiles/client
 
-TypeScript client for the [CarbonFiles](https://github.com/CarbonNeuron/carbon-files) file-sharing API. Generated from the OpenAPI spec using [Hey API](https://heyapi.dev/).
+Handcrafted TypeScript client for the [CarbonFiles](https://github.com/CarbonNeuron/carbon-files) file-sharing API. Zero runtime dependencies, works in Node.js 18+ and browsers.
 
 ## Installation
 
@@ -11,91 +11,153 @@ npm install @carbonfiles/client
 ## Quick Start
 
 ```typescript
-import { createClient, createConfig, postApiBuckets } from '@carbonfiles/client';
+import { CarbonFilesClient } from "@carbonfiles/client";
 
-const client = createClient(
-  createConfig({
-    baseUrl: 'https://files.example.com',
-    headers: {
-      Authorization: 'Bearer cf4_your_api_key',
-    },
-  })
-);
+const cf = new CarbonFilesClient("https://files.example.com", "cf4_your_api_key");
 
-const { data, error } = await postApiBuckets({
-  client,
-  body: { name: 'my-bucket' },
-});
+// Create a bucket
+const bucket = await cf.buckets.create({ name: "my-bucket", expires_in: "30d" });
 
-if (data) {
-  console.log('Created bucket:', data.id);
-}
+// Upload a file
+const file = new Uint8Array([/* ... */]);
+const upload = await cf.buckets[bucket.id].files.upload(file, "photo.jpg");
+
+// Download a file
+const response = await cf.buckets[bucket.id].files["photo.jpg"].download();
+
+// Delete a bucket
+await cf.buckets[bucket.id].delete();
 ```
 
-## Common Operations
+## Fluent Resource API
 
-### Create a bucket
+Access resources using bracket notation for a natural, chainable API:
 
 ```typescript
-import { postApiBuckets } from '@carbonfiles/client';
+// Buckets
+cf.buckets.create({ name: "docs" });
+cf.buckets.list({ limit: 10, sort: "name" });
+cf.buckets["bucket-id"].get();
+cf.buckets["bucket-id"].update({ description: "Updated" });
+cf.buckets["bucket-id"].delete();
+cf.buckets["bucket-id"].getSummary();
+cf.buckets["bucket-id"].downloadZip();
 
-const { data } = await postApiBuckets({
-  client,
-  body: {
-    name: 'my-bucket',
-    description: 'Project assets',
-    expires_in: '30d',
+// Files
+cf.buckets["bucket-id"].files.list({ limit: 50 });
+cf.buckets["bucket-id"].files.listDirectory("images/");
+cf.buckets["bucket-id"].files.listTree({ delimiter: "/" });
+cf.buckets["bucket-id"].files["report.pdf"].getMetadata();
+cf.buckets["bucket-id"].files["report.pdf"].download();
+cf.buckets["bucket-id"].files["report.pdf"].verify();
+cf.buckets["bucket-id"].files["report.pdf"].delete();
+
+// API Keys
+cf.keys.create({ name: "ci-deploy" });
+cf.keys.list();
+cf.keys["cf4_abc"].revoke();
+cf.keys["cf4_abc"].getUsage();
+
+// Short URLs
+cf.shortUrls["abc123"].delete();
+
+// Dashboard
+cf.dashboard.createToken({ expires_in: "1h" });
+cf.dashboard.getCurrentUser();
+
+// Stats & Health
+cf.stats.get();
+cf.health.check();
+```
+
+## Upload with Progress
+
+Track upload progress with a callback:
+
+```typescript
+const data = new Uint8Array(1024 * 1024); // 1MB
+
+const result = await cf.buckets["bucket-id"].files.upload(data, "large-file.bin", {
+  onProgress: (progress) => {
+    console.log(`${progress.bytesSent}/${progress.totalBytes} (${progress.percentage}%)`);
   },
 });
 ```
 
-### Upload a file
+Upload with a scoped upload token (no API key required):
 
 ```typescript
-import { postApiBucketsByIdUpload } from '@carbonfiles/client';
-
-const formData = new FormData();
-formData.append('file', file);
-
-const { data } = await postApiBucketsByIdUpload({
-  client,
-  path: { id: 'bucket-id' },
-  body: formData,
+const result = await cf.buckets["bucket-id"].files.upload(data, "file.txt", {
+  uploadToken: "cfu_upload_token",
 });
 ```
 
-### List files in a bucket
+## Content-Addressed Storage (CAS)
+
+Uploaded files include SHA-256 hashes and deduplication info:
 
 ```typescript
-import { getApiBucketsByIdFiles } from '@carbonfiles/client';
+const upload = await cf.buckets["bucket-id"].files.upload(data, "file.txt");
+console.log(upload.uploaded[0].sha256);       // content hash
+console.log(upload.uploaded[0].deduplicated);  // true if content already existed
 
-const { data } = await getApiBucketsByIdFiles({
-  client,
-  path: { id: 'bucket-id' },
-  query: { limit: 50, offset: 0 },
-});
+// Verify file integrity
+const verify = await cf.buckets["bucket-id"].files["file.txt"].verify();
+console.log(verify.valid);        // true if stored_hash === computed_hash
+console.log(verify.stored_hash);
+console.log(verify.computed_hash);
 ```
 
-### Download a file
+Bucket details include unique content metrics:
 
 ```typescript
-import { getApiBucketsByIdFilesByFilePath } from '@carbonfiles/client';
-
-const { data } = await getApiBucketsByIdFilesByFilePath({
-  client,
-  path: { id: 'bucket-id', filePath: 'photo.jpg' },
-});
+const detail = await cf.buckets["bucket-id"].get();
+console.log(detail.unique_content_count);  // distinct SHA-256 hashes
+console.log(detail.unique_content_size);   // total size of unique content
 ```
 
-### Delete a bucket
+## File Modification
+
+Patch a byte range or append to a file:
 
 ```typescript
-import { deleteApiBucketsById } from '@carbonfiles/client';
+// Replace bytes 0-9 in a 100-byte file
+const patch = new Uint8Array([/* replacement bytes */]);
+await cf.buckets["bucket-id"].files["data.bin"].patch(patch, 0, 9, 100);
 
-await deleteApiBucketsById({
-  client,
-  path: { id: 'bucket-id' },
+// Append to a file
+const extra = new Uint8Array([/* more data */]);
+await cf.buckets["bucket-id"].files["log.txt"].append(extra);
+```
+
+## Directory Browsing
+
+Two modes for listing files hierarchically:
+
+```typescript
+// Flat directory listing
+const dir = await cf.buckets["bucket-id"].files.listDirectory("images/", {
+  limit: 50,
 });
+console.log(dir.files);    // BucketFile[]
+console.log(dir.folders);  // string[]
+
+// S3-style tree listing with cursor pagination
+const tree = await cf.buckets["bucket-id"].files.listTree({
+  delimiter: "/",
+  prefix: "docs/",
+  limit: 100,
+});
+console.log(tree.directories);  // DirectoryEntry[]
+console.log(tree.files);        // BucketFile[]
+if (tree.cursor) {
+  // Fetch next page
+  const next = await cf.buckets["bucket-id"].files.listTree({
+    delimiter: "/",
+    prefix: "docs/",
+    cursor: tree.cursor,
+  });
+}
 ```
 
 ## Authentication
@@ -109,96 +171,47 @@ CarbonFiles supports four token types, all passed as Bearer tokens:
 | Dashboard JWT | JWT token | Admin-level, 24h max |
 | Upload token | `cfu_` prefix | Single bucket |
 
-Set authentication globally on the client:
-
 ```typescript
-const client = createClient(
-  createConfig({
-    baseUrl: 'https://files.example.com',
-    headers: {
-      Authorization: 'Bearer cf4_your_api_key',
-    },
-  })
-);
-```
+// API key
+const cf = new CarbonFilesClient("https://files.example.com", "cf4_your_key");
 
-Or per-request:
-
-```typescript
-const { data } = await getApiBuckets({
-  client,
-  headers: {
-    Authorization: 'Bearer cf4_your_api_key',
-  },
-});
-```
-
-Upload tokens can also be passed as a query parameter:
-
-```typescript
-const { data } = await postApiBucketsByIdUpload({
-  client,
-  path: { id: 'bucket-id' },
-  query: { token: 'cfu_upload_token' },
-  body: formData,
+// Options constructor with custom fetch
+const cf = new CarbonFilesClient({
+  baseUrl: "https://files.example.com",
+  apiKey: "cf4_your_key",
+  fetch: customFetch,
 });
 ```
 
 ## Error Handling
 
-All functions return `{ data, error }` by default:
+All API errors throw `CarbonFilesError` with structured error info:
 
 ```typescript
-const { data, error } = await postApiBuckets({
-  client,
-  body: { name: 'my-bucket' },
-});
+import { CarbonFilesClient, CarbonFilesError } from "@carbonfiles/client";
 
-if (error) {
-  // ErrorResponse: { error: string, hint?: string }
-  console.error(error.error, error.hint);
+try {
+  await cf.buckets["nonexistent"].get();
+} catch (e) {
+  if (e instanceof CarbonFilesError) {
+    console.log(e.status); // 404
+    console.log(e.error);  // "Bucket not found"
+    console.log(e.hint);   // "Check the bucket ID"
+  }
 }
 ```
 
-Enable throwing on errors instead:
+## Upload Tokens
+
+Create scoped upload tokens for public/limited uploads:
 
 ```typescript
-const client = createClient(
-  createConfig({
-    baseUrl: 'https://files.example.com',
-    throwOnError: true,
-  })
-);
+const token = await cf.buckets["bucket-id"].tokens.create({
+  expires_in: "1h",
+  max_uploads: 10,
+});
+console.log(token.token); // "cfu_..."
 ```
-
-## Available Functions
-
-| Function | Description |
-|----------|-------------|
-| `getHealthz` | Health check |
-| `postApiBuckets` | Create bucket |
-| `getApiBuckets` | List buckets |
-| `getApiBucketsById` | Get bucket details |
-| `patchApiBucketsById` | Update bucket |
-| `deleteApiBucketsById` | Delete bucket |
-| `getApiBucketsByIdSummary` | Bucket summary (plaintext) |
-| `getApiBucketsByIdZip` | Download bucket as ZIP |
-| `getApiBucketsByIdFiles` | List files in bucket |
-| `getApiBucketsByIdFilesByFilePath` | Get file |
-| `deleteApiBucketsByIdFilesByFilePath` | Delete file |
-| `patchApiBucketsByIdFilesByFilePath` | Patch file (ranges/append) |
-| `postApiBucketsByIdUpload` | Upload files (multipart) |
-| `putApiBucketsByIdUploadStream` | Stream upload |
-| `getSByCode` | Resolve short URL |
-| `deleteApiShortByCode` | Delete short URL |
-| `getApiKeys` | List API keys |
-| `postApiKeys` | Create API key |
-| `deleteApiKeysByPrefix` | Revoke API key |
-| `getApiKeysByPrefixUsage` | API key usage stats |
-| `postApiBucketsByIdTokens` | Create upload token |
-| `postApiTokensDashboard` | Create dashboard token |
-| `getApiTokensDashboardMe` | Validate dashboard token |
-| `getApiStats` | System statistics |
 
 ## Links
 
