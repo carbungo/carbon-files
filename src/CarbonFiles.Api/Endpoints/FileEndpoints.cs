@@ -11,23 +11,42 @@ public static class FileEndpoints
 {
     public static void MapFileEndpoints(this IEndpointRouteBuilder app)
     {
-        // GET /api/buckets/{id}/files — List files (public, paginated)
+        // GET /api/buckets/{id}/files — List files (public, paginated or tree mode)
         app.MapGet("/api/buckets/{id}/files", async (string id, IFileService fileService, IBucketService bucketService,
-            int limit = 50, int offset = 0, string sort = "created_at", string order = "desc") =>
+            string? delimiter, string? prefix, string? cursor,
+            int? limit, int? offset, string? sort, string? order) =>
         {
-            var bucket = await bucketService.GetByIdAsync(id);
+            var bucket = await bucketService.GetBucketAsync(id);
             if (bucket == null)
                 return ApiResults.NotFound("Bucket not found");
 
-            var result = await fileService.ListAsync(id,
-                new PaginationParams { Limit = limit, Offset = offset, Sort = sort, Order = order });
-            return Results.Ok(result);
+            if (delimiter != null)
+            {
+                // Tree mode
+                var treeLimit = Math.Clamp(limit ?? 100, 1, 1000);
+                var result = await fileService.ListTreeAsync(id, prefix, delimiter, treeLimit, cursor);
+                return Results.Ok(result);
+            }
+            else
+            {
+                // Flat mode (existing behavior)
+                var pagination = new PaginationParams
+                {
+                    Limit = Math.Clamp(limit ?? 50, 1, 1000),
+                    Offset = Math.Max(offset ?? 0, 0),
+                    Sort = sort ?? "created_at",
+                    Order = order ?? "desc"
+                };
+                var result = await fileService.ListAsync(id, pagination);
+                return Results.Ok(result);
+            }
         })
         .Produces<PaginatedResponse<BucketFile>>(200)
+        .Produces<FileTreeResponse>(200)
         .Produces<ErrorResponse>(404)
         .WithTags("Files")
         .WithSummary("List files in bucket")
-        .WithDescription("Public. Returns a paginated list of files in the specified bucket.");
+        .WithDescription("Public. Returns a paginated list of files, or tree structure with ?delimiter=/&prefix=.");
 
         // GET /api/buckets/{id}/ls — List directory contents (public)
         app.MapGet("/api/buckets/{id}/ls", async (string id, IFileService fileService, IBucketService bucketService,

@@ -7,6 +7,7 @@ public interface IFileService
 {
     Task<PaginatedResponse<BucketFile>> ListAsync(string bucketId, PaginationParams pagination);
     Task<DirectoryListingResponse> ListDirectoryAsync(string bucketId, string path, PaginationParams pagination);
+    Task<FileTreeResponse> ListTreeAsync(string bucketId, string? prefix, string delimiter, int limit, string? cursor);
     Task<BucketFile?> GetMetadataAsync(string bucketId, string path);
     Task<string?> GetContentDiskPathAsync(string bucketId, string path);
     Task<bool> DeleteAsync(string bucketId, string path, AuthContext auth);

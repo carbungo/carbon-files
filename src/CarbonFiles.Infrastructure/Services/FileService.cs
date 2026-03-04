@@ -156,6 +156,90 @@ public sealed class FileService : IFileService
         };
     }
 
+    public async Task<FileTreeResponse> ListTreeAsync(string bucketId, string? prefix, string delimiter, int limit, string? cursor)
+    {
+        prefix ??= "";
+
+        var sql = cursor != null
+            ? "SELECT Path, Size FROM Files WHERE BucketId = @bucketId AND Path > @cursor AND Path LIKE @likePrefix ORDER BY Path LIMIT @fetchLimit"
+            : "SELECT Path, Size FROM Files WHERE BucketId = @bucketId AND Path LIKE @likePrefix ORDER BY Path LIMIT @fetchLimit";
+
+        var likePrefix = prefix.Replace("%", "[%]").Replace("_", "[_]") + "%";
+        var fetchLimit = limit * 10 + 100;
+
+        var allEntries = await Db.QueryAsync(_db, sql,
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                p.AddWithValue("@likePrefix", likePrefix);
+                p.AddWithValue("@fetchLimit", fetchLimit);
+                if (cursor != null)
+                    p.AddWithValue("@cursor", cursor);
+            },
+            r => (Path: r.GetString(0), Size: r.GetInt64(1)));
+
+        var files = new List<string>();
+        var dirStats = new Dictionary<string, (int Count, long Size)>();
+
+        foreach (var (path, size) in allEntries)
+        {
+            var remainder = path[prefix.Length..];
+            var delimIndex = remainder.IndexOf(delimiter, StringComparison.Ordinal);
+
+            if (delimIndex < 0)
+            {
+                files.Add(path);
+            }
+            else
+            {
+                var dirName = prefix + remainder[..(delimIndex + delimiter.Length)];
+                if (dirStats.TryGetValue(dirName, out var stats))
+                    dirStats[dirName] = (stats.Count + 1, stats.Size + size);
+                else
+                    dirStats[dirName] = (1, size);
+            }
+        }
+
+        var filePaths = files.Take(limit).ToList();
+        var fileEntities = new List<BucketFile>();
+        if (filePaths.Count > 0)
+        {
+            foreach (var fp in filePaths)
+            {
+                var entity = await Db.QueryFirstOrDefaultAsync(_db,
+                    "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @path",
+                    p =>
+                    {
+                        p.AddWithValue("@bucketId", bucketId);
+                        p.AddWithValue("@path", fp);
+                    },
+                    FileEntity.Read);
+                if (entity != null)
+                    fileEntities.Add(entity.ToBucketFile());
+            }
+        }
+
+        var directories = dirStats
+            .OrderBy(d => d.Key)
+            .Select(d => new DirectoryEntry { Path = d.Key, FileCount = d.Value.Count, TotalSize = d.Value.Size })
+            .ToList();
+
+        string? nextCursor = null;
+        if (files.Count > limit || allEntries.Count >= fetchLimit)
+            nextCursor = filePaths.LastOrDefault() ?? allEntries.LastOrDefault().Path;
+
+        return new FileTreeResponse
+        {
+            Prefix = string.IsNullOrEmpty(prefix) ? null : prefix,
+            Delimiter = delimiter,
+            Directories = directories,
+            Files = fileEntities,
+            TotalFiles = files.Count,
+            TotalDirectories = directories.Count,
+            Cursor = nextCursor,
+        };
+    }
+
     public async Task<BucketFile?> GetMetadataAsync(string bucketId, string path)
     {
         var cached = _cache.GetFileMetadata(bucketId, path);
