@@ -1,5 +1,4 @@
 using CarbonFiles.Api.Auth;
-using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Requests;
@@ -17,12 +16,10 @@ public static class KeyEndpoints
         group.MapPost("/", async (CreateApiKeyRequest request, HttpContext ctx, IApiKeyService svc, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.KeyEndpoints");
-            var auth = ctx.GetAuthContext();
-            if (!auth.IsAdmin)
-                return Results.Json(new ErrorResponse { Error = "Admin access required", Hint = "Use the admin key or a dashboard token." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAdmin(out var auth) is { } err) return err;
 
             if (string.IsNullOrWhiteSpace(request.Name))
-                return Results.Json(new ErrorResponse { Error = "Name is required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest("Name is required");
 
             var result = await svc.CreateAsync(request.Name);
             logger.LogInformation("API key created: {Prefix} ({Name})", result.Prefix, request.Name);
@@ -38,9 +35,7 @@ public static class KeyEndpoints
         group.MapGet("/", async (HttpContext ctx, IApiKeyService svc,
             int limit = 50, int offset = 0, string sort = "created_at", string order = "desc") =>
         {
-            var auth = ctx.GetAuthContext();
-            if (!auth.IsAdmin)
-                return Results.Json(new ErrorResponse { Error = "Admin access required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAdmin(out var auth) is { } err) return err;
 
             var result = await svc.ListAsync(new PaginationParams { Limit = limit, Offset = offset, Sort = sort, Order = order });
             return Results.Ok(result);
@@ -54,9 +49,7 @@ public static class KeyEndpoints
         group.MapDelete("/{prefix}", async (string prefix, HttpContext ctx, IApiKeyService svc, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.KeyEndpoints");
-            var auth = ctx.GetAuthContext();
-            if (!auth.IsAdmin)
-                return Results.Json(new ErrorResponse { Error = "Admin access required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAdmin(out var auth) is { } err) return err;
 
             var deleted = await svc.DeleteAsync(prefix);
             if (deleted)
@@ -64,7 +57,7 @@ public static class KeyEndpoints
                 logger.LogInformation("API key deleted: {Prefix}", prefix);
                 return Results.NoContent();
             }
-            return Results.Json(new ErrorResponse { Error = "API key not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+            return ApiResults.NotFound("API key not found");
         })
         .Produces(204)
         .Produces<ErrorResponse>(403)
@@ -75,12 +68,10 @@ public static class KeyEndpoints
         // GET /api/keys/{prefix}/usage — Detailed key usage (Admin only)
         group.MapGet("/{prefix}/usage", async (string prefix, HttpContext ctx, IApiKeyService svc) =>
         {
-            var auth = ctx.GetAuthContext();
-            if (!auth.IsAdmin)
-                return Results.Json(new ErrorResponse { Error = "Admin access required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAdmin(out var auth) is { } err) return err;
 
             var result = await svc.GetUsageAsync(prefix);
-            return result != null ? Results.Ok(result) : Results.Json(new ErrorResponse { Error = "API key not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+            return result != null ? Results.Ok(result) : ApiResults.NotFound("API key not found");
         })
         .Produces<ApiKeyUsageResponse>(200)
         .Produces<ErrorResponse>(403)

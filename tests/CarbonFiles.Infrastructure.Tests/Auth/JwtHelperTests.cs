@@ -21,34 +21,32 @@ public class JwtHelperTests
     }
 
     [Fact]
-    public void ValidateToken_SucceedsForValidToken()
+    public async Task ValidateTokenAsync_SucceedsForValidToken()
     {
         var expiresAt = DateTime.UtcNow.AddHours(1);
         var (token, _) = _jwt.CreateDashboardToken(expiresAt);
 
-        var (isValid, validatedExpiry) = _jwt.ValidateToken(token);
+        var (isValid, validatedExpiry) = await _jwt.ValidateTokenAsync(token);
 
         isValid.Should().BeTrue();
         validatedExpiry.Should().BeCloseTo(expiresAt, TimeSpan.FromSeconds(2));
     }
 
     [Fact]
-    public void ValidateToken_FailsForExpiredToken()
+    public async Task ValidateTokenAsync_FailsForExpiredToken()
     {
-        // Create a token that expired in the past — we need to bypass the 24h cap check
-        // by creating a token with a very short TTL and waiting, but that's impractical.
-        // Instead, create with a different helper to simulate expiry.
+        // Create a token with a different key — should fail validation
         var differentHelper = new JwtHelper("different-secret");
         var (token, _) = differentHelper.CreateDashboardToken(DateTime.UtcNow.AddMinutes(1));
 
         // Validate with wrong key — should fail
-        var (isValid, _) = _jwt.ValidateToken(token);
+        var (isValid, _) = await _jwt.ValidateTokenAsync(token);
 
         isValid.Should().BeFalse();
     }
 
     [Fact]
-    public void ValidateToken_FailsForTamperedToken()
+    public async Task ValidateTokenAsync_FailsForTamperedToken()
     {
         var expiresAt = DateTime.UtcNow.AddHours(1);
         var (token, _) = _jwt.CreateDashboardToken(expiresAt);
@@ -58,7 +56,7 @@ public class JwtHelperTests
         var tamperedSignature = parts[2][..^1] + (parts[2][^1] == 'A' ? 'B' : 'A');
         var tamperedToken = $"{parts[0]}.{parts[1]}.{tamperedSignature}";
 
-        var (isValid, _) = _jwt.ValidateToken(tamperedToken);
+        var (isValid, _) = await _jwt.ValidateTokenAsync(tamperedToken);
 
         isValid.Should().BeFalse();
     }

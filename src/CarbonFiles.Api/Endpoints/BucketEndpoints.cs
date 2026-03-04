@@ -1,6 +1,5 @@
 using System.IO.Compression;
 using CarbonFiles.Api.Auth;
-using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Requests;
@@ -20,12 +19,10 @@ public static class BucketEndpoints
         group.MapPost("/", async (CreateBucketRequest request, HttpContext ctx, IBucketService svc, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.BucketEndpoints");
-            var auth = ctx.GetAuthContext();
-            if (auth.IsPublic)
-                return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key or admin key." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAuth(out var auth) is { } err) return err;
 
             if (string.IsNullOrWhiteSpace(request.Name))
-                return Results.Json(new ErrorResponse { Error = "Name is required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest("Name is required");
 
             try
             {
@@ -36,7 +33,7 @@ public static class BucketEndpoints
             catch (ArgumentException ex)
             {
                 logger.LogWarning("Bucket creation failed: {Error}", ex.Message);
-                return Results.Json(new ErrorResponse { Error = ex.Message }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest(ex.Message);
             }
         })
         .Produces<Bucket>(201)
@@ -50,9 +47,7 @@ public static class BucketEndpoints
             int limit = 50, int offset = 0, string sort = "created_at", string order = "desc",
             bool include_expired = false) =>
         {
-            var auth = ctx.GetAuthContext();
-            if (auth.IsPublic)
-                return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key or admin key." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAuth(out var auth) is { } err) return err;
 
             // Only admin can include expired
             var includeExpired = include_expired && auth.IsAdmin;
@@ -74,7 +69,7 @@ public static class BucketEndpoints
             var result = await svc.GetByIdAsync(id);
             return result != null
                 ? Results.Ok(result)
-                : Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                : ApiResults.NotFound("Bucket not found");
         })
         .Produces<BucketDetailResponse>(200)
         .Produces<ErrorResponse>(404)
@@ -85,13 +80,11 @@ public static class BucketEndpoints
         group.MapPatch("/{id}", async (string id, UpdateBucketRequest request, HttpContext ctx, IBucketService svc, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.BucketEndpoints");
-            var auth = ctx.GetAuthContext();
-            if (auth.IsPublic)
-                return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key or admin key." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAuth(out var auth) is { } err) return err;
 
             // At least one field required
             if (request.Name == null && request.Description == null && request.ExpiresIn == null)
-                return Results.Json(new ErrorResponse { Error = "At least one field is required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest("At least one field is required");
 
             try
             {
@@ -101,15 +94,15 @@ public static class BucketEndpoints
                     // Need to distinguish 404 vs 403 — check if bucket exists
                     var existing = await svc.GetByIdAsync(id);
                     if (existing == null)
-                        return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
-                    return Results.Json(new ErrorResponse { Error = "Access denied" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+                        return ApiResults.NotFound("Bucket not found");
+                    return ApiResults.Forbidden("Access denied");
                 }
                 logger.LogInformation("Bucket {BucketId} updated", id);
                 return Results.Ok(result);
             }
             catch (ArgumentException ex)
             {
-                return Results.Json(new ErrorResponse { Error = ex.Message }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest(ex.Message);
             }
         })
         .Produces<Bucket>(200)
@@ -123,9 +116,7 @@ public static class BucketEndpoints
         group.MapDelete("/{id}", async (string id, HttpContext ctx, IBucketService svc, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.BucketEndpoints");
-            var auth = ctx.GetAuthContext();
-            if (auth.IsPublic)
-                return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key or admin key." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAuth(out var auth) is { } err) return err;
 
             var result = await svc.DeleteAsync(id, auth);
             if (!result)
@@ -133,8 +124,8 @@ public static class BucketEndpoints
                 // Need to distinguish 404 vs 403 — check if bucket exists
                 var existing = await svc.GetByIdAsync(id);
                 if (existing == null)
-                    return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
-                return Results.Json(new ErrorResponse { Error = "Access denied" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+                    return ApiResults.NotFound("Bucket not found");
+                return ApiResults.Forbidden("Access denied");
             }
             logger.LogInformation("Bucket {BucketId} deleted", id);
             return Results.NoContent();
@@ -151,7 +142,7 @@ public static class BucketEndpoints
             var result = await svc.GetSummaryAsync(id);
             return result != null
                 ? Results.Text(result, "text/plain")
-                : Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                : ApiResults.NotFound("Bucket not found");
         })
         .Produces<string>(200, "text/plain")
         .Produces<ErrorResponse>(404)
@@ -164,7 +155,7 @@ public static class BucketEndpoints
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.BucketEndpoints");
             var bucket = await svc.GetBucketAsync(id);
             if (bucket == null)
-                return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                return ApiResults.NotFound("Bucket not found");
 
             // Log warning for large buckets
             if (bucket.FileCount > 10000 || bucket.TotalSize > 10L * 1024 * 1024 * 1024)
@@ -173,7 +164,8 @@ public static class BucketEndpoints
             var files = await svc.GetAllFilesAsync(id);
 
             ctx.Response.ContentType = "application/zip";
-            ctx.Response.Headers["Content-Disposition"] = $"attachment; filename=\"{bucket.Name}.zip\"";
+            var safeName = bucket.Name.Replace("\"", "'").Replace("\r", "").Replace("\n", "");
+            ctx.Response.Headers["Content-Disposition"] = $"attachment; filename=\"{safeName}.zip\"";
 
             // HEAD request: return headers without body
             if (HttpMethods.IsHead(ctx.Request.Method))

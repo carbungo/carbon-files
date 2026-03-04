@@ -119,7 +119,7 @@ public class ShortUrlEndpointTests : IntegrationTestBase
 
         // Use the unauthenticated client
         var response = await Fixture.Client.DeleteAsync($"/api/short/{shortCode}", TestContext.Current.CancellationToken);
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]

@@ -1,4 +1,6 @@
 using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Configuration;
@@ -37,8 +39,10 @@ public sealed class AuthService : IAuthService
             return AuthContext.Public();
         }
 
-        // 1. Check admin key
-        if (bearerToken == _options.AdminKey)
+        // 1. Check admin key (constant-time comparison to prevent timing attacks)
+        if (CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(bearerToken),
+                Encoding.UTF8.GetBytes(_options.AdminKey)))
         {
             _logger.LogInformation("Admin key authenticated");
             return AuthContext.Admin();
@@ -66,7 +70,7 @@ public sealed class AuthService : IAuthService
         }
 
         // 3. Check dashboard JWT
-        var (isValid, _) = _jwt.ValidateToken(bearerToken);
+        var (isValid, _) = await _jwt.ValidateTokenAsync(bearerToken);
         if (isValid)
         {
             _logger.LogInformation("Dashboard JWT authenticated");
@@ -93,10 +97,12 @@ public sealed class AuthService : IAuthService
         if (entity == null) return null;
 
         var hashed = Convert.ToHexStringLower(
-            System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes(secret)));
+            SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
 
-        if (hashed != entity.HashedSecret) return null;
+        if (!CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(hashed),
+                Convert.FromHexString(entity.HashedSecret)))
+            return null;
 
         // Update last_used_at
         await Db.ExecuteAsync(_db,

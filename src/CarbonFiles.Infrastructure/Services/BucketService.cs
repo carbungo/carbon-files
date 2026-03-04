@@ -137,12 +137,11 @@ public sealed class BucketService : IBucketService
         };
     }
 
-    public async Task<BucketDetailResponse?> GetByIdAsync(string id)
+    /// <summary>
+    /// Fetches a bucket entity by ID, returning null if not found or expired.
+    /// </summary>
+    private async Task<BucketEntity?> FetchActiveBucketEntityAsync(string id)
     {
-        var cached = _cache.GetBucket(id);
-        if (cached != null)
-            return cached;
-
         var entity = await Db.QueryFirstOrDefaultAsync(_db,
             "SELECT * FROM Buckets WHERE Id = @id",
             p => p.AddWithValue("@id", id),
@@ -152,13 +151,46 @@ public sealed class BucketService : IBucketService
             _logger.LogDebug("Bucket {BucketId} not found", id);
             return null;
         }
-
-        // Expired buckets are not accessible
-        if (entity.ExpiresAt.HasValue && entity.ExpiresAt.Value <= DateTime.UtcNow)
+        if (entity.IsExpired)
         {
             _logger.LogDebug("Bucket {BucketId} is expired", id);
             return null;
         }
+        return entity;
+    }
+
+    /// <summary>
+    /// Fetches a bucket entity for mutation, returning null if not found or caller lacks permission.
+    /// Does not check expiry (expired buckets can still be updated/deleted by their owner).
+    /// </summary>
+    private async Task<BucketEntity?> FetchBucketForMutationAsync(string id, AuthContext auth)
+    {
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM Buckets WHERE Id = @id",
+            p => p.AddWithValue("@id", id),
+            BucketEntity.Read);
+        if (entity == null)
+        {
+            _logger.LogDebug("Bucket {BucketId} not found", id);
+            return null;
+        }
+        if (!auth.CanManage(entity.Owner))
+        {
+            _logger.LogWarning("Access denied: bucket {BucketId} by {Owner}", id, auth.OwnerName ?? "unknown");
+            return null;
+        }
+        return entity;
+    }
+
+    public async Task<BucketDetailResponse?> GetByIdAsync(string id)
+    {
+        var cached = _cache.GetBucket(id);
+        if (cached != null)
+            return cached;
+
+        var entity = await FetchActiveBucketEntityAsync(id);
+        if (entity == null)
+            return null;
 
         var files = await Db.QueryAsync(_db,
             "SELECT * FROM Files WHERE BucketId = @id ORDER BY Path LIMIT 101",
@@ -188,18 +220,8 @@ public sealed class BucketService : IBucketService
 
     public async Task<Bucket?> GetBucketAsync(string id)
     {
-        var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Buckets WHERE Id = @id",
-            p => p.AddWithValue("@id", id),
-            BucketEntity.Read);
-        if (entity == null)
-            return null;
-
-        // Expired buckets are not accessible
-        if (entity.ExpiresAt.HasValue && entity.ExpiresAt.Value <= DateTime.UtcNow)
-            return null;
-
-        return entity.ToBucket();
+        var entity = await FetchActiveBucketEntityAsync(id);
+        return entity?.ToBucket();
     }
 
     public async Task<List<BucketFile>> GetAllFilesAsync(string id, CancellationToken ct = default)
@@ -215,22 +237,9 @@ public sealed class BucketService : IBucketService
 
     public async Task<Bucket?> UpdateAsync(string id, UpdateBucketRequest request, AuthContext auth)
     {
-        var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Buckets WHERE Id = @id",
-            p => p.AddWithValue("@id", id),
-            BucketEntity.Read);
+        var entity = await FetchBucketForMutationAsync(id, auth);
         if (entity == null)
-        {
-            _logger.LogDebug("Bucket {BucketId} not found for update", id);
             return null;
-        }
-
-        // Check ownership
-        if (!auth.CanManage(entity.Owner))
-        {
-            _logger.LogWarning("Access denied: update bucket {BucketId} by {Owner}", id, auth.OwnerName ?? "unknown");
-            return null;
-        }
 
         if (request.Name != null)
             entity.Name = request.Name;
@@ -269,22 +278,9 @@ public sealed class BucketService : IBucketService
 
     public async Task<bool> DeleteAsync(string id, AuthContext auth)
     {
-        var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Buckets WHERE Id = @id",
-            p => p.AddWithValue("@id", id),
-            BucketEntity.Read);
+        var entity = await FetchBucketForMutationAsync(id, auth);
         if (entity == null)
-        {
-            _logger.LogDebug("Bucket {BucketId} not found for delete", id);
             return false;
-        }
-
-        // Check ownership
-        if (!auth.CanManage(entity.Owner))
-        {
-            _logger.LogWarning("Access denied: delete bucket {BucketId} by {Owner}", id, auth.OwnerName ?? "unknown");
-            return false;
-        }
 
         // Delete all related entities in a transaction
         using var tx = _db.BeginTransaction();
@@ -300,10 +296,17 @@ public sealed class BucketService : IBucketService
 
         tx.Commit();
 
-        // Delete the bucket directory from disk
+        // Delete the bucket directory from disk (best-effort after DB commit)
         var bucketDir = Path.Combine(_dataDir, id);
-        if (Directory.Exists(bucketDir))
-            Directory.Delete(bucketDir, true);
+        try
+        {
+            if (Directory.Exists(bucketDir))
+                Directory.Delete(bucketDir, true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bucket {BucketId} deleted from DB but disk cleanup failed for {Dir}", id, bucketDir);
+        }
 
         _logger.LogInformation("Deleted bucket {BucketId} with {FileCount} files, {ShortUrlCount} short URLs, {TokenCount} upload tokens",
             id, fileCount, shortUrlCount, tokenCount);
@@ -319,22 +322,9 @@ public sealed class BucketService : IBucketService
 
     public async Task<string?> GetSummaryAsync(string id)
     {
-        var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Buckets WHERE Id = @id",
-            p => p.AddWithValue("@id", id),
-            BucketEntity.Read);
+        var entity = await FetchActiveBucketEntityAsync(id);
         if (entity == null)
-        {
-            _logger.LogDebug("Bucket {BucketId} not found for summary", id);
             return null;
-        }
-
-        // Expired buckets are not accessible
-        if (entity.ExpiresAt.HasValue && entity.ExpiresAt.Value <= DateTime.UtcNow)
-        {
-            _logger.LogDebug("Bucket {BucketId} is expired (summary)", id);
-            return null;
-        }
 
         var files = await Db.QueryAsync(_db,
             "SELECT * FROM Files WHERE BucketId = @id ORDER BY Path",

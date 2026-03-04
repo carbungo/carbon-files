@@ -33,7 +33,7 @@ public static class ExpiryParser
             "3d" => DateTime.UtcNow.AddDays(3),
             "1w" => DateTime.UtcNow.AddDays(7),
             "2w" => DateTime.UtcNow.AddDays(14),
-            "1m" => DateTime.UtcNow.AddDays(30),
+            "30d" or "1m" => DateTime.UtcNow.AddDays(30),
             _ => throw new ArgumentException($"Invalid expiry format: {value}")
         };
     }

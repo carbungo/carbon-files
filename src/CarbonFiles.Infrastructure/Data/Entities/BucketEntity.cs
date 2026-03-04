@@ -16,6 +16,8 @@ public sealed class BucketEntity
     public long TotalSize { get; set; }
     public long DownloadCount { get; set; }
 
+    internal bool IsExpired => ExpiresAt.HasValue && ExpiresAt.Value <= DateTime.UtcNow;
+
     internal static BucketEntity Read(SqliteDataReader r) => new()
     {
         Id = r.GetString(r.GetOrdinal("Id")),

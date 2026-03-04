@@ -1,5 +1,4 @@
 using CarbonFiles.Api.Auth;
-using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Responses;
@@ -16,10 +15,9 @@ public static class FileEndpoints
         app.MapGet("/api/buckets/{id}/files", async (string id, IFileService fileService, IBucketService bucketService,
             int limit = 50, int offset = 0, string sort = "created_at", string order = "desc") =>
         {
-            // Check bucket exists
             var bucket = await bucketService.GetByIdAsync(id);
             if (bucket == null)
-                return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                return ApiResults.NotFound("Bucket not found");
 
             var result = await fileService.ListAsync(id,
                 new PaginationParams { Limit = limit, Offset = offset, Sort = sort, Order = order });
@@ -36,10 +34,9 @@ public static class FileEndpoints
             async (string id, string filePath, HttpContext ctx,
             IFileService fileService, FileStorageService storageService, IBucketService bucketService) =>
         {
-            // Check bucket exists
             var bucket = await bucketService.GetByIdAsync(id);
             if (bucket == null)
-                return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                return ApiResults.NotFound("Bucket not found");
 
             if (filePath.EndsWith("/content", StringComparison.OrdinalIgnoreCase))
             {
@@ -47,11 +44,10 @@ public static class FileEndpoints
                 return await ServeFileContent(id, actualPath, ctx, fileService, storageService);
             }
 
-            // Return file metadata
             var meta = await fileService.GetMetadataAsync(id, filePath);
             return meta != null
                 ? Results.Ok(meta)
-                : Results.Json(new ErrorResponse { Error = "File not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                : ApiResults.NotFound("File not found");
         })
         .Produces<BucketFile>(200)
         .Produces(206)
@@ -67,14 +63,11 @@ public static class FileEndpoints
             IFileService fileService, IBucketService bucketService, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.FileEndpoints");
-            // Check bucket exists
             var bucket = await bucketService.GetByIdAsync(id);
             if (bucket == null)
-                return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                return ApiResults.NotFound("Bucket not found");
 
-            var auth = ctx.GetAuthContext();
-            if (auth.IsPublic)
-                return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key or admin key." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAuth(out var auth) is { } err) return err;
 
             var deleted = await fileService.DeleteAsync(id, filePath, auth);
             if (deleted)
@@ -82,7 +75,7 @@ public static class FileEndpoints
                 logger.LogInformation("File {FilePath} deleted from bucket {BucketId}", filePath, id);
                 return Results.NoContent();
             }
-            return Results.Json(new ErrorResponse { Error = "File not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+            return ApiResults.NotFound("File not found");
         })
         .Produces(204)
         .Produces<ErrorResponse>(403)
@@ -96,16 +89,14 @@ public static class FileEndpoints
             IFileService fileService, FileStorageService storageService, IBucketService bucketService, IUploadTokenService uploadTokenService, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.FileEndpoints");
-            // Only handle paths ending with /content
             if (!filePath.EndsWith("/content", StringComparison.OrdinalIgnoreCase))
                 return Results.NotFound();
 
             var actualPath = filePath[..^"/content".Length];
 
-            // Check bucket exists
             var bucket = await bucketService.GetByIdAsync(id);
             if (bucket == null)
-                return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                return ApiResults.NotFound("Bucket not found");
 
             // Auth check: owner, admin, or upload token
             var auth = ctx.GetAuthContext();
@@ -113,31 +104,27 @@ public static class FileEndpoints
             {
                 var token = ctx.Request.Query["token"].FirstOrDefault();
                 if (string.IsNullOrEmpty(token))
-                    return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key, admin key, or upload token." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+                    return ApiResults.Forbidden("Authentication required", "Use an API key, admin key, or upload token.");
 
-                // Validate upload token
                 var (tokenBucketId, isValid) = await uploadTokenService.ValidateAsync(token);
                 if (!isValid || tokenBucketId != id)
-                    return Results.Json(new ErrorResponse { Error = "Invalid or expired upload token" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+                    return ApiResults.Forbidden("Invalid or expired upload token");
 
                 auth = AuthContext.Admin();
             }
 
-            // Check if file exists
             var meta = await fileService.GetMetadataAsync(id, actualPath);
             if (meta == null)
-                return Results.Json(new ErrorResponse { Error = "File not found", Hint = "Use upload endpoints to create files." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                return ApiResults.Error("File not found", 404, "Use upload endpoints to create files.");
 
-            // Check X-Append header
             var isAppend = ctx.Request.Headers["X-Append"].FirstOrDefault()?.Equals("true", StringComparison.OrdinalIgnoreCase) == true;
 
             long offset = 0;
             if (!isAppend)
             {
-                // Parse Content-Range header
                 var contentRange = ctx.Request.Headers.ContentRange.FirstOrDefault();
                 if (contentRange == null || !contentRange.StartsWith("bytes "))
-                    return Results.Json(new ErrorResponse { Error = "Content-Range header required for non-append PATCH" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                    return ApiResults.BadRequest("Content-Range header required for non-append PATCH");
 
                 var rangePart = contentRange["bytes ".Length..];
                 var slashIndex = rangePart.IndexOf('/');
@@ -146,18 +133,16 @@ public static class FileEndpoints
 
                 var dashIndex = rangePart.IndexOf('-');
                 if (dashIndex < 0 || !long.TryParse(rangePart[..dashIndex], out offset))
-                    return Results.Json(new ErrorResponse { Error = "Invalid Content-Range" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                    return ApiResults.BadRequest("Invalid Content-Range");
 
-                // Validate range
                 if (offset < 0 || offset > meta.Size)
-                    return Results.Json(new ErrorResponse { Error = "Range not satisfiable" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 416);
+                    return ApiResults.Error("Range not satisfiable", 416);
             }
 
             var newSize = await storageService.PatchFileAsync(id, actualPath, ctx.Request.Body, offset, isAppend);
             if (newSize < 0)
                 return Results.NotFound();
 
-            // Update file metadata in DB
             await fileService.UpdateFileSizeAsync(id, actualPath, newSize);
 
             logger.LogInformation("File {FilePath} patched in bucket {BucketId}", actualPath, id);
@@ -178,16 +163,14 @@ public static class FileEndpoints
     {
         var meta = await fileService.GetMetadataAsync(bucketId, path);
         if (meta == null)
-            return Results.Json(new ErrorResponse { Error = "File not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+            return ApiResults.NotFound("File not found");
 
         var etag = $"\"{meta.Size}-{meta.UpdatedAt.Ticks}\"";
         var lastModified = meta.UpdatedAt;
 
-        // Conditional request: If-None-Match
         if (ctx.Request.Headers.IfNoneMatch.FirstOrDefault() == etag)
             return Results.StatusCode(304);
 
-        // Conditional request: If-Modified-Since
         if (ctx.Request.Headers.IfModifiedSince.Count > 0)
         {
             if (DateTimeOffset.TryParse(ctx.Request.Headers.IfModifiedSince, out var ifModifiedSince))
@@ -199,9 +182,8 @@ public static class FileEndpoints
 
         var physicalPath = storageService.GetFilePath(bucketId, path);
         if (!System.IO.File.Exists(physicalPath))
-            return Results.Json(new ErrorResponse { Error = "File not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+            return ApiResults.NotFound("File not found");
 
-        // Update last_used_at (fire-and-forget)
         _ = fileService.UpdateLastUsedAsync(bucketId);
 
         var contentType = meta.MimeType;
@@ -217,8 +199,6 @@ public static class FileEndpoints
         var etagValue = new EntityTagHeaderValue(etag);
         var lastModifiedOffset = new DateTimeOffset(DateTime.SpecifyKind(lastModified, DateTimeKind.Utc));
 
-        // PhysicalFile uses SendFileAsync internally → Linux sendfile() zero-copy syscall.
-        // Handles Range requests (206), If-Range, HEAD, and Accept-Ranges automatically.
         return TypedResults.PhysicalFile(
             physicalPath,
             contentType,

@@ -1,5 +1,4 @@
 using CarbonFiles.Api.Auth;
-using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 
@@ -10,7 +9,6 @@ public static class ShortUrlEndpoints
     public static void MapShortUrlEndpoints(this IEndpointRouteBuilder app)
     {
         // GET /s/{code} — Resolve short URL (public)
-        // 302 redirect to file content URL
         app.MapGet("/s/{code}", async (string code, IShortUrlService svc, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.ShortUrlEndpoints");
@@ -32,9 +30,7 @@ public static class ShortUrlEndpoints
         app.MapDelete("/api/short/{code}", async (string code, HttpContext ctx, IShortUrlService svc, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.ShortUrlEndpoints");
-            var auth = ctx.GetAuthContext();
-            if (auth.IsPublic)
-                return Results.Json(new ErrorResponse { Error = "Authentication required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 401);
+            if (ctx.RequireAuth(out var auth) is { } err) return err;
 
             var deleted = await svc.DeleteAsync(code, auth);
             if (deleted)
@@ -45,7 +41,7 @@ public static class ShortUrlEndpoints
             return Results.NotFound();
         })
         .Produces(204)
-        .Produces<ErrorResponse>(401)
+        .Produces<ErrorResponse>(403)
         .Produces(404)
         .WithTags("Short URLs")
         .WithSummary("Delete short URL")

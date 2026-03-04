@@ -24,19 +24,17 @@ public sealed class UploadTokenService : IUploadTokenService
         _logger = logger;
     }
 
-    public async Task<UploadTokenResponse> CreateAsync(string bucketId, CreateUploadTokenRequest request, AuthContext auth)
+    public async Task<UploadTokenResponse?> CreateAsync(string bucketId, CreateUploadTokenRequest request, AuthContext auth)
     {
-        // Verify bucket exists
         var bucket = await Db.QueryFirstOrDefaultAsync(_db,
             "SELECT * FROM Buckets WHERE Id = @bucketId",
             p => p.AddWithValue("@bucketId", bucketId),
             BucketEntity.Read);
         if (bucket == null)
-            return null!;
+            return null;
 
-        // Verify auth can manage this bucket
         if (!auth.CanManage(bucket.Owner))
-            return null!;
+            return null;
 
         var token = IdGenerator.GenerateUploadToken();
 

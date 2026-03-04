@@ -1,5 +1,4 @@
 using CarbonFiles.Api.Auth;
-using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Configuration;
 using CarbonFiles.Core.Exceptions;
 using CarbonFiles.Core.Interfaces;
@@ -24,10 +23,9 @@ public static class UploadEndpoints
             IUploadTokenService uploadTokenService, IOptions<CarbonFilesOptions> options, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.UploadEndpoints");
-            // Check bucket exists
             var bucket = await bucketService.GetByIdAsync(id);
             if (bucket == null)
-                return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                return ApiResults.NotFound("Bucket not found");
 
             // Auth check: owner, admin, or upload token
             var auth = ctx.GetAuthContext();
@@ -36,26 +34,23 @@ public static class UploadEndpoints
             {
                 var token = ctx.Request.Query["token"].FirstOrDefault();
                 if (string.IsNullOrEmpty(token))
-                    return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key, admin key, or upload token." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+                    return ApiResults.Forbidden("Authentication required", "Use an API key, admin key, or upload token.");
 
-                // Validate upload token via service
                 var (tokenBucketId, isValid) = await uploadTokenService.ValidateAsync(token);
                 if (!isValid || tokenBucketId != id)
-                    return Results.Json(new ErrorResponse { Error = "Invalid or expired upload token" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+                    return ApiResults.Forbidden("Invalid or expired upload token");
 
                 validatedToken = token;
-                // Use admin auth context for upload token (it's authorized)
                 auth = AuthContext.Admin();
             }
 
-            // Parse multipart boundary from Content-Type
             if (!MediaTypeHeaderValue.TryParse(ctx.Request.ContentType, out var mediaType) ||
                 !mediaType.MediaType.Equals("multipart/form-data", StringComparison.OrdinalIgnoreCase))
-                return Results.Json(new ErrorResponse { Error = "Expected multipart/form-data" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest("Expected multipart/form-data");
 
             var boundary = HeaderUtilities.RemoveQuotes(mediaType.Boundary).Value;
             if (string.IsNullOrEmpty(boundary))
-                return Results.Json(new ErrorResponse { Error = "Missing multipart boundary" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest("Missing multipart boundary");
 
             // Stream sections directly from the request body — no buffering
             var reader = new MultipartReader(boundary, ctx.Request.Body);
@@ -83,7 +78,7 @@ public static class UploadEndpoints
                 var path = GenericNames.Contains(fieldName ?? "") ? fileName : fieldName;
 
                 if (string.IsNullOrWhiteSpace(path))
-                    return Results.Json(new ErrorResponse { Error = "File path could not be determined" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                    return ApiResults.BadRequest("File path could not be determined");
 
                 try
                 {
@@ -93,7 +88,7 @@ public static class UploadEndpoints
                 }
                 catch (FileTooLargeException)
                 {
-                    return Results.Json(new ErrorResponse { Error = "File too large" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 413);
+                    return ApiResults.Error("File too large", 413);
                 }
             }
 
@@ -122,10 +117,9 @@ public static class UploadEndpoints
             IUploadTokenService uploadTokenService, IOptions<CarbonFilesOptions> options, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.UploadEndpoints");
-            // Check bucket exists
             var bucket = await bucketService.GetByIdAsync(id);
             if (bucket == null)
-                return Results.Json(new ErrorResponse { Error = "Bucket not found" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 404);
+                return ApiResults.NotFound("Bucket not found");
 
             // Auth check: owner, admin, or upload token
             var auth = ctx.GetAuthContext();
@@ -134,12 +128,11 @@ public static class UploadEndpoints
             {
                 var token = ctx.Request.Query["token"].FirstOrDefault();
                 if (string.IsNullOrEmpty(token))
-                    return Results.Json(new ErrorResponse { Error = "Authentication required", Hint = "Use an API key, admin key, or upload token." }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+                    return ApiResults.Forbidden("Authentication required", "Use an API key, admin key, or upload token.");
 
-                // Validate upload token via service
                 var (tokenBucketId, isValid) = await uploadTokenService.ValidateAsync(token);
                 if (!isValid || tokenBucketId != id)
-                    return Results.Json(new ErrorResponse { Error = "Invalid or expired upload token" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+                    return ApiResults.Forbidden("Invalid or expired upload token");
 
                 validatedToken = token;
                 auth = AuthContext.Admin();
@@ -147,7 +140,7 @@ public static class UploadEndpoints
 
             var filename = ctx.Request.Query["filename"].FirstOrDefault();
             if (string.IsNullOrEmpty(filename))
-                return Results.Json(new ErrorResponse { Error = "filename query parameter is required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest("filename query parameter is required");
 
             var maxUploadSize = options.Value.MaxUploadSize;
 
@@ -158,7 +151,7 @@ public static class UploadEndpoints
             }
             catch (FileTooLargeException)
             {
-                return Results.Json(new ErrorResponse { Error = "File too large" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 413);
+                return ApiResults.Error("File too large", 413);
             }
 
             logger.LogInformation("Stream uploaded {FileName} to bucket {BucketId}", filename, id);

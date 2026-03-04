@@ -24,11 +24,7 @@ public sealed class DashboardTokenService : IDashboardTokenService
         var expiresAt = ExpiryParser.Parse(expiresIn, defaultExpiry)
             ?? throw new ArgumentException("Dashboard tokens cannot use 'never' expiry");
 
-        // Cap at 24 hours — JwtHelper.CreateDashboardToken enforces this too
-        var maxExpiry = DateTime.UtcNow.AddHours(24);
-        if (expiresAt > maxExpiry)
-            throw new ArgumentException("Dashboard token expiry cannot exceed 24 hours");
-
+        // JwtHelper.CreateDashboardToken enforces the 24-hour max cap
         var (token, actualExpiry) = _jwt.CreateDashboardToken(expiresAt);
 
         _logger.LogInformation("Created dashboard token expiring at {ExpiresAt}", actualExpiry.ToString("o"));
@@ -40,9 +36,9 @@ public sealed class DashboardTokenService : IDashboardTokenService
         });
     }
 
-    public DashboardTokenInfo? ValidateToken(string token)
+    public async Task<DashboardTokenInfo?> ValidateTokenAsync(string token)
     {
-        var (isValid, expiresAt) = _jwt.ValidateToken(token);
+        var (isValid, expiresAt) = await _jwt.ValidateTokenAsync(token);
         if (!isValid)
         {
             _logger.LogDebug("Dashboard token validation failed");

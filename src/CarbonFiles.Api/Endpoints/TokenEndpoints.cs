@@ -1,5 +1,4 @@
 using CarbonFiles.Api.Auth;
-using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Requests;
@@ -17,9 +16,7 @@ public static class TokenEndpoints
         group.MapPost("/", async (CreateDashboardTokenRequest? request, HttpContext ctx, IDashboardTokenService svc, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.TokenEndpoints");
-            var auth = ctx.GetAuthContext();
-            if (!auth.IsAdmin)
-                return Results.Json(new ErrorResponse { Error = "Admin access required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAdmin(out var auth) is { } err) return err;
 
             try
             {
@@ -29,7 +26,7 @@ public static class TokenEndpoints
             }
             catch (ArgumentException ex)
             {
-                return Results.Json(new ErrorResponse { Error = ex.Message }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+                return ApiResults.BadRequest(ex.Message);
             }
         })
         .Produces<DashboardTokenResponse>(201)
@@ -39,19 +36,20 @@ public static class TokenEndpoints
         .WithDescription("Auth: Admin only. Creates a short-lived JWT token for dashboard access with optional custom expiry.");
 
         // GET /api/tokens/dashboard/me — Validate current token
-        group.MapGet("/me", (HttpContext ctx, IDashboardTokenService svc) =>
+        // This endpoint directly parses the Bearer token since it needs the raw JWT string
+        // for DashboardTokenService.ValidateTokenAsync, not just the resolved AuthContext.
+        group.MapGet("/me", async (HttpContext ctx, IDashboardTokenService svc) =>
         {
-            // This endpoint is specifically for dashboard tokens
             var authHeader = ctx.Request.Headers.Authorization.FirstOrDefault();
             var token = authHeader?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
                 ? authHeader["Bearer ".Length..]
                 : null;
 
             if (token == null)
-                return Results.Json(new ErrorResponse { Error = "No token provided" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 401);
+                return ApiResults.Error("No token provided", 401);
 
-            var info = svc.ValidateToken(token);
-            return info != null ? Results.Ok(info) : Results.Json(new ErrorResponse { Error = "Invalid or expired token" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 401);
+            var info = await svc.ValidateTokenAsync(token);
+            return info != null ? Results.Ok(info) : ApiResults.Error("Invalid or expired token", 401);
         })
         .Produces<DashboardTokenInfo>(200)
         .Produces<ErrorResponse>(401)

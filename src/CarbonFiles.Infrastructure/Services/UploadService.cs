@@ -86,18 +86,7 @@ public sealed class UploadService : IUploadService
 
             _logger.LogInformation("Updated file {Path} in bucket {BucketId} ({OldSize} -> {Size} bytes)", normalized, bucketId, oldSize, size);
 
-            var updatedFile = new BucketFile
-            {
-                Path = existing.Path,
-                Name = name,
-                Size = size,
-                MimeType = mimeType,
-                ShortCode = existing.ShortCode,
-                ShortUrl = existing.ShortCode != null ? $"/s/{existing.ShortCode}" : null,
-                CreatedAt = existing.CreatedAt,
-                UpdatedAt = now
-            };
-
+            var updatedFile = ToBucketFile(existing.Path, name, size, mimeType, existing.ShortCode, existing.CreatedAt, now);
             await _notifications.NotifyFileUpdated(bucketId, updatedFile);
             return updatedFile;
         }
@@ -151,18 +140,7 @@ public sealed class UploadService : IUploadService
 
             _logger.LogInformation("Created file {Path} in bucket {BucketId} ({Size} bytes, short code {ShortCode})", normalized, bucketId, size, shortCode);
 
-            var createdFile = new BucketFile
-            {
-                Path = normalized,
-                Name = name,
-                Size = size,
-                MimeType = mimeType,
-                ShortCode = shortCode,
-                ShortUrl = $"/s/{shortCode}",
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-
+            var createdFile = ToBucketFile(normalized, name, size, mimeType, shortCode, now, now);
             await _notifications.NotifyFileCreated(bucketId, createdFile);
             return createdFile;
         }
@@ -173,4 +151,16 @@ public sealed class UploadService : IUploadService
         var size = _storage.GetFileSize(bucketId, path.ToLowerInvariant());
         return Task.FromResult(size);
     }
+
+    private static BucketFile ToBucketFile(string path, string name, long size, string mimeType, string? shortCode, DateTime createdAt, DateTime updatedAt) => new()
+    {
+        Path = path,
+        Name = name,
+        Size = size,
+        MimeType = mimeType,
+        ShortCode = shortCode,
+        ShortUrl = shortCode != null ? $"/s/{shortCode}" : null,
+        CreatedAt = createdAt,
+        UpdatedAt = updatedAt
+    };
 }

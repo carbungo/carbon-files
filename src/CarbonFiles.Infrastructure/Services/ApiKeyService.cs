@@ -209,7 +209,9 @@ public sealed class ApiKeyService : IApiKeyService
         }
 
         var hashed = HashSecret(secret);
-        if (hashed != entity.HashedSecret)
+        if (!CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(hashed),
+                Convert.FromHexString(entity.HashedSecret)))
         {
             _logger.LogWarning("API key validation failed: invalid secret for prefix {Prefix}", prefix);
             return null;

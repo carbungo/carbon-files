@@ -34,18 +34,18 @@ public sealed class JwtHelper
         return (token, expiresAt);
     }
 
-    public (bool IsValid, DateTime ExpiresAt) ValidateToken(string token)
+    public async Task<(bool IsValid, DateTime ExpiresAt)> ValidateTokenAsync(string token)
     {
         try
         {
-            var result = _handler.ValidateTokenAsync(token, new TokenValidationParameters
+            var result = await _handler.ValidateTokenAsync(token, new TokenValidationParameters
             {
                 ValidateIssuer = false,
                 ValidateAudience = false,
                 ValidateLifetime = true,
                 IssuerSigningKey = _key,
                 ClockSkew = TimeSpan.FromSeconds(30)
-            }).GetAwaiter().GetResult();
+            });
 
             if (!result.IsValid) return (false, default);
 

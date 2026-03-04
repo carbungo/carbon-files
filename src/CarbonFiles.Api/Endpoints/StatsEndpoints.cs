@@ -1,5 +1,4 @@
 using CarbonFiles.Api.Auth;
-using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Responses;
@@ -13,9 +12,7 @@ public static class StatsEndpoints
         app.MapGet("/api/stats", async (HttpContext ctx, IStatsService statsService, ICacheService cache, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.StatsEndpoints");
-            var auth = ctx.GetAuthContext();
-            if (!auth.IsAdmin)
-                return Results.Json(new ErrorResponse { Error = "Admin access required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 403);
+            if (ctx.RequireAdmin(out var auth) is { } err) return err;
 
             var cachedStats = cache.GetStats();
             if (cachedStats != null)

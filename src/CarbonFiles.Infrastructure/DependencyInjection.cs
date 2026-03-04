@@ -35,6 +35,9 @@ public static class DependencyInjection
             DbPath = section[nameof(CarbonFilesOptions.DbPath)] ?? "./data/carbonfiles.db",
         };
 
+        if (string.IsNullOrWhiteSpace(options.AdminKey))
+            throw new InvalidOperationException("CarbonFiles:AdminKey must be configured. Set the CarbonFiles__AdminKey environment variable or CarbonFiles:AdminKey in configuration.");
+
         // Dapper + SQLite
         var connectionString = $"Data Source={options.DbPath}";
         services.AddScoped<IDbConnection>(_ =>

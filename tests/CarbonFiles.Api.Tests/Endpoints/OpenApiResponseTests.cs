@@ -248,7 +248,7 @@ public class OpenApiResponseTests : IntegrationTestBase
     {
         var spec = await GetSpecAsync();
         var op = GetOperation(spec, "/api/short/{code}", "delete");
-        AssertResponseCodes(op, "/api/short/{code}", "delete", "204", "401", "404");
+        AssertResponseCodes(op, "/api/short/{code}", "delete", "204", "403", "404");
     }
 
     // ── Stats ───────────────────────────────────────────────────────

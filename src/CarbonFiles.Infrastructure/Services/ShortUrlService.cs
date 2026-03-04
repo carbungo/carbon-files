@@ -29,26 +29,25 @@ public sealed class ShortUrlService : IShortUrlService
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
             var code = IdGenerator.GenerateShortCode();
+            var now = DateTime.UtcNow;
 
-            var exists = await Db.ExecuteScalarAsync<int>(_db,
-                "SELECT COUNT(*) FROM ShortUrls WHERE Code = @code",
-                p => p.AddWithValue("@code", code)) > 0;
-            if (exists)
+            try
+            {
+                await Db.ExecuteAsync(_db,
+                    "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@code, @bucketId, @filePath, @now)",
+                    p =>
+                    {
+                        p.AddWithValue("@code", code);
+                        p.AddWithValue("@bucketId", bucketId);
+                        p.AddWithValue("@filePath", filePath);
+                        p.AddWithValue("@now", now);
+                    });
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 19) // SQLITE_CONSTRAINT (unique violation)
             {
                 _logger.LogDebug("Short code collision, retrying (attempt {Attempt})", attempt + 1);
                 continue;
             }
-
-            var now = DateTime.UtcNow;
-            await Db.ExecuteAsync(_db,
-                "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@code, @bucketId, @filePath, @now)",
-                p =>
-                {
-                    p.AddWithValue("@code", code);
-                    p.AddWithValue("@bucketId", bucketId);
-                    p.AddWithValue("@filePath", filePath);
-                    p.AddWithValue("@now", now);
-                });
 
             _cache.SetShortUrl(code, bucketId, filePath);
             _logger.LogInformation("Created short URL {Code} for bucket {BucketId} file {FilePath}", code, bucketId, filePath);
@@ -83,7 +82,7 @@ public sealed class ShortUrlService : IShortUrlService
         if (bucket == null)
             return null;
 
-        if (bucket.ExpiresAt.HasValue && bucket.ExpiresAt.Value < DateTime.UtcNow)
+        if (bucket.IsExpired)
         {
             _logger.LogDebug("Short URL {Code} points to expired bucket {BucketId}", code, shortUrl.BucketId);
             return null;
