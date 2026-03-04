@@ -173,4 +173,55 @@ public class FileOperationsTests
         req.Method.Should().Be(HttpMethod.Delete);
         req.RequestUri!.AbsolutePath.Should().Be("/api/buckets/b1/files/test.txt");
     }
+
+    [Fact]
+    public async Task PatchAsync_SendsPatchWithContentRangeHeader()
+    {
+        var (client, handler) = CreateClient();
+        handler.Enqueue(HttpStatusCode.OK,
+            """{"path":"test.bin","name":"test.bin","size":1024,"mime_type":"application/octet-stream","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}""");
+
+        using var stream = new MemoryStream(new byte[512]);
+        var result = await client.Buckets["b1"].Files["test.bin"]
+            .PatchAsync(stream, 0, 511, 1024, TestContext.Current.CancellationToken);
+
+        result.Path.Should().Be("test.bin");
+        var req = handler.Requests[0];
+        req.Method.Method.Should().Be("PATCH");
+        req.RequestUri!.AbsolutePath.Should().Be("/api/buckets/b1/files/test.bin/content");
+        req.Content!.Headers.GetValues("Content-Range").Should().ContainSingle("bytes 0-511/1024");
+    }
+
+    [Fact]
+    public async Task AppendAsync_SendsPatchWithXAppendHeader()
+    {
+        var (client, handler) = CreateClient();
+        handler.Enqueue(HttpStatusCode.OK,
+            """{"path":"log.txt","name":"log.txt","size":50,"mime_type":"text/plain","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}""");
+
+        using var stream = new MemoryStream("appended data"u8.ToArray());
+        var result = await client.Buckets["b1"].Files["log.txt"]
+            .AppendAsync(stream, TestContext.Current.CancellationToken);
+
+        result.Path.Should().Be("log.txt");
+        var req = handler.Requests[0];
+        req.Method.Method.Should().Be("PATCH");
+        req.RequestUri!.AbsolutePath.Should().Be("/api/buckets/b1/files/log.txt/content");
+        req.Headers.GetValues("X-Append").Should().ContainSingle("true");
+    }
+
+    [Fact]
+    public async Task PatchAsync_ThrowsCarbonFilesException_OnError()
+    {
+        var (client, handler) = CreateClient();
+        handler.Enqueue(HttpStatusCode.NotFound, """{"error":"File not found","hint":"Check the path"}""");
+
+        using var stream = new MemoryStream(new byte[10]);
+        var act = () => client.Buckets["b1"].Files["missing.bin"]
+            .PatchAsync(stream, 0, 9, 100, TestContext.Current.CancellationToken);
+
+        var ex = await act.Should().ThrowAsync<CarbonFilesException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Which.Message.Should().Contain("File not found");
+    }
 }

@@ -31,7 +31,9 @@ public class CarbonFilesClient
         Stats = new StatsOperations(_transport);
         ShortUrls = new ShortUrlOperations(_transport);
         Dashboard = new DashboardOperations(_transport);
-        Events = new CarbonFilesEvents(_transport.BaseAddress!, options.ApiKey);
+        var baseAddress = http.BaseAddress
+            ?? throw new ArgumentException("BaseAddress must be set either on CarbonFilesClientOptions or the provided HttpClient.");
+        Events = new CarbonFilesEvents(baseAddress, options.ApiKey);
     }
 
     public HealthOperations Health { get; }

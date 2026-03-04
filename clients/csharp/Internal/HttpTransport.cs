@@ -60,6 +60,10 @@ internal class HttpTransport
         );
     }
 
+    /// <summary>
+    /// Returns a stream over the response body. The underlying <see cref="HttpResponseMessage"/>
+    /// is intentionally not disposed here; disposing the returned stream releases the connection.
+    /// </summary>
     public async Task<Stream> GetStreamAsync(string path, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Get, path);
@@ -138,7 +142,7 @@ internal class HttpTransport
             ?? throw new CarbonFilesException(response.StatusCode, "Failed to deserialize response");
     }
 
-    private async Task ThrowIfErrorAsync(HttpResponseMessage response, CancellationToken ct)
+    internal async Task ThrowIfErrorAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.IsSuccessStatusCode) return;
 
@@ -159,7 +163,7 @@ internal class HttpTransport
         throw new CarbonFilesException(response.StatusCode, body);
     }
 
-    private static string BuildUrl(string path, Dictionary<string, string?>? query)
+    internal static string BuildUrl(string path, Dictionary<string, string?>? query)
     {
         if (query == null || query.Count == 0) return path;
 

@@ -30,13 +30,13 @@ public class FileResource
 
     public async Task<BucketFile> PatchAsync(Stream content, long rangeStart, long rangeEnd, long totalSize, CancellationToken ct = default)
     {
-        var request = new HttpRequestMessage(new HttpMethod("PATCH"), $"{BasePath}/content");
+        using var request = new HttpRequestMessage(new HttpMethod("PATCH"), $"{BasePath}/content");
         request.Content = new StreamContent(content);
         request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         request.Content.Headers.Add("Content-Range", $"bytes {rangeStart}-{rangeEnd}/{totalSize}");
 
         using var response = await _transport.SendRawAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        await _transport.ThrowIfErrorAsync(response, ct);
         var json = await response.Content.ReadAsStringAsync(
 #if !NETSTANDARD2_0
             ct
@@ -48,13 +48,13 @@ public class FileResource
 
     public async Task<BucketFile> AppendAsync(Stream content, CancellationToken ct = default)
     {
-        var request = new HttpRequestMessage(new HttpMethod("PATCH"), $"{BasePath}/content");
+        using var request = new HttpRequestMessage(new HttpMethod("PATCH"), $"{BasePath}/content");
         request.Content = new StreamContent(content);
         request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         request.Headers.Add("X-Append", "true");
 
         using var response = await _transport.SendRawAsync(request, ct);
-        response.EnsureSuccessStatusCode();
+        await _transport.ThrowIfErrorAsync(response, ct);
         var json = await response.Content.ReadAsStringAsync(
 #if !NETSTANDARD2_0
             ct

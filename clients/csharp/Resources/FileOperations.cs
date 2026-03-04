@@ -1,4 +1,3 @@
-using System.Text;
 using CarbonFiles.Client.Internal;
 using CarbonFiles.Client.Models;
 
@@ -30,7 +29,7 @@ public class FileOperations
             if (pagination.Order != null) query["order"] = pagination.Order;
         }
 
-        var url = BuildUrl($"/api/buckets/{Uri.EscapeDataString(_bucketId)}/files", query);
+        var url = HttpTransport.BuildUrl($"/api/buckets/{Uri.EscapeDataString(_bucketId)}/files", query);
         return _transport.GetAsync<PaginatedResponse<BucketFile>>(url, ct);
     }
 
@@ -49,7 +48,7 @@ public class FileOperations
             if (pagination.Order != null) query["order"] = pagination.Order;
         }
 
-        var url = BuildUrl($"/api/buckets/{Uri.EscapeDataString(_bucketId)}/ls", query);
+        var url = HttpTransport.BuildUrl($"/api/buckets/{Uri.EscapeDataString(_bucketId)}/ls", query);
         return _transport.GetAsync<DirectoryListingResponse>(url, ct);
     }
 
@@ -66,27 +65,9 @@ public class FileOperations
         };
         if (uploadToken != null) query["token"] = uploadToken;
 
-        var url = BuildUrl($"/api/buckets/{Uri.EscapeDataString(_bucketId)}/upload/stream", query);
+        var url = HttpTransport.BuildUrl($"/api/buckets/{Uri.EscapeDataString(_bucketId)}/upload/stream", query);
         var streamContent = new ProgressStreamContent(content, progress);
         streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         return _transport.PutStreamAsync<UploadResponse>(url, streamContent, ct);
-    }
-
-    private static string BuildUrl(string path, Dictionary<string, string?> query)
-    {
-        if (query.Count == 0) return path;
-
-        var sb = new StringBuilder(path);
-        var first = true;
-        foreach (var kvp in query)
-        {
-            if (kvp.Value == null) continue;
-            sb.Append(first ? '?' : '&');
-            sb.Append(Uri.EscapeDataString(kvp.Key));
-            sb.Append('=');
-            sb.Append(Uri.EscapeDataString(kvp.Value));
-            first = false;
-        }
-        return sb.ToString();
     }
 }
