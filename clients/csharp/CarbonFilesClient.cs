@@ -1,3 +1,4 @@
+using CarbonFiles.Client.Events;
 using CarbonFiles.Client.Internal;
 using CarbonFiles.Client.Resources;
 
@@ -30,6 +31,7 @@ public class CarbonFilesClient
         Stats = new StatsOperations(_transport);
         ShortUrls = new ShortUrlOperations(_transport);
         Dashboard = new DashboardOperations(_transport);
+        Events = new CarbonFilesEvents(_transport.BaseAddress!, options.ApiKey);
     }
 
     public HealthOperations Health { get; }
@@ -38,4 +40,5 @@ public class CarbonFilesClient
     public StatsOperations Stats { get; }
     public ShortUrlOperations ShortUrls { get; }
     public DashboardOperations Dashboard { get; }
+    public CarbonFilesEvents Events { get; }
 }
