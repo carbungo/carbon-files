@@ -27,6 +27,7 @@ public static class EntityMapping
         MimeType = entity.MimeType,
         ShortCode = entity.ShortCode,
         ShortUrl = entity.ShortCode != null ? $"/s/{entity.ShortCode}" : null,
+        Sha256 = entity.ContentHash,
         CreatedAt = entity.CreatedAt,
         UpdatedAt = entity.UpdatedAt
     };

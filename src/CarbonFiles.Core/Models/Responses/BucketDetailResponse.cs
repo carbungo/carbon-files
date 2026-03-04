@@ -13,6 +13,8 @@ public sealed class BucketDetailResponse
     public DateTime? LastUsedAt { get; init; }
     public int FileCount { get; init; }
     public long TotalSize { get; init; }
-    public required IReadOnlyList<BucketFile> Files { get; init; }
-    public bool HasMoreFiles { get; init; }
+    public int UniqueContentCount { get; init; }
+    public long UniqueContentSize { get; init; }
+    public IReadOnlyList<BucketFile>? Files { get; init; }
+    public bool? HasMoreFiles { get; init; }
 }
