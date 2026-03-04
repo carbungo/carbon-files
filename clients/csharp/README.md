@@ -62,22 +62,53 @@ var stats = await client.Stats.GetAsync();
 var usage = await client.Keys["cf4_prefix"].GetUsageAsync();
 ```
 
-## Upload with Progress
+## Uploads
+
+### From a file path
 
 ```csharp
-using var fileStream = File.OpenRead("photo.jpg");
+var result = await client.Buckets["bucket-id"].Files.UploadFileAsync(
+    "/path/to/photo.jpg",
+    ct: cancellationToken);
+```
+
+The filename is derived from the path automatically. Override it if needed:
+
+```csharp
+await client.Buckets["bucket-id"].Files.UploadFileAsync(
+    "/path/to/photo.jpg",
+    filename: "renamed.jpg");
+```
+
+### From any stream
+
+```csharp
+using var stream = File.OpenRead("photo.jpg");
 
 var result = await client.Buckets["bucket-id"].Files.UploadAsync(
-    fileStream,
-    "photo.jpg",
+    stream, "photo.jpg", ct: cancellationToken);
+```
+
+### From a byte array
+
+```csharp
+var data = Encoding.UTF8.GetBytes("hello world");
+await client.Buckets["bucket-id"].Files.UploadAsync(data, "hello.txt");
+```
+
+### With progress tracking
+
+All upload methods support progress callbacks:
+
+```csharp
+await client.Buckets["bucket-id"].Files.UploadFileAsync(
+    "/path/to/large-file.zip",
     progress: new Progress<UploadProgress>(p =>
         Console.WriteLine($"{p.BytesSent}/{p.TotalBytes} bytes ({p.Percentage}%)")),
     ct: cancellationToken);
-
-Console.WriteLine($"Uploaded: {result.Uploaded[0].Path}");
 ```
 
-### Upload with token
+### With an upload token
 
 ```csharp
 await client.Buckets["bucket-id"].Files.UploadAsync(
@@ -195,7 +226,9 @@ catch (CarbonFilesException ex)
 |--------|-------------|
 | `.ListAsync(pagination?)` | List files |
 | `.ListDirectoryAsync(path?, pagination?)` | Directory listing |
-| `.UploadAsync(stream, filename, progress?, uploadToken?)` | Stream upload |
+| `.UploadAsync(stream, filename, progress?, uploadToken?)` | Upload from any stream |
+| `.UploadAsync(bytes, filename, progress?, uploadToken?)` | Upload from byte array |
+| `.UploadFileAsync(filePath, filename?, progress?, uploadToken?)` | Upload from file path |
 | `["path"].GetMetadataAsync()` | File metadata |
 | `["path"].DownloadAsync()` | Download file |
 | `["path"].DeleteAsync()` | Delete file |
