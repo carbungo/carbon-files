@@ -2,8 +2,9 @@ using System.Data;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Utilities;
+using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
-using Dapper;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace CarbonFiles.Infrastructure.Services;
@@ -37,9 +38,14 @@ public sealed class UploadService : IUploadService
         var size = await _storage.StoreAsync(bucketId, normalized, content);
 
         // Check if file already exists
-        var existing = await _db.QueryFirstOrDefaultAsync<FileEntity>(
+        var existing = await Db.QueryFirstOrDefaultAsync(_db,
             "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
-            new { bucketId, normalized });
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                p.AddWithValue("@normalized", normalized);
+            },
+            FileEntity.Read);
         var now = DateTime.UtcNow;
 
         if (existing != null)
@@ -49,14 +55,28 @@ public sealed class UploadService : IUploadService
 
             using var tx = _db.BeginTransaction();
 
-            await _db.ExecuteAsync(
+            await Db.ExecuteAsync(_db,
                 "UPDATE Files SET Size = @size, MimeType = @mimeType, Name = @name, UpdatedAt = @now WHERE BucketId = @bucketId AND Path = @normalized",
-                new { size, mimeType, name, now, bucketId, normalized }, tx);
+                p =>
+                {
+                    p.AddWithValue("@size", size);
+                    p.AddWithValue("@mimeType", mimeType);
+                    p.AddWithValue("@name", name);
+                    p.AddWithValue("@now", now);
+                    p.AddWithValue("@bucketId", bucketId);
+                    p.AddWithValue("@normalized", normalized);
+                }, tx);
 
             // Update bucket total size (difference) and last used
-            await _db.ExecuteAsync(
+            await Db.ExecuteAsync(_db,
                 "UPDATE Buckets SET TotalSize = MAX(0, TotalSize - @oldSize) + @size, LastUsedAt = @now WHERE Id = @bucketId",
-                new { oldSize, size, now, bucketId }, tx);
+                p =>
+                {
+                    p.AddWithValue("@oldSize", oldSize);
+                    p.AddWithValue("@size", size);
+                    p.AddWithValue("@now", now);
+                    p.AddWithValue("@bucketId", bucketId);
+                }, tx);
 
             tx.Commit();
 
@@ -88,19 +108,40 @@ public sealed class UploadService : IUploadService
 
             using var tx = _db.BeginTransaction();
 
-            await _db.ExecuteAsync(
+            await Db.ExecuteAsync(_db,
                 "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, ShortCode, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @ShortCode, @CreatedAt, @UpdatedAt)",
-                new { BucketId = bucketId, Path = normalized, Name = name, Size = size, MimeType = mimeType, ShortCode = shortCode, CreatedAt = now, UpdatedAt = now }, tx);
+                p =>
+                {
+                    p.AddWithValue("@BucketId", bucketId);
+                    p.AddWithValue("@Path", normalized);
+                    p.AddWithValue("@Name", name);
+                    p.AddWithValue("@Size", size);
+                    p.AddWithValue("@MimeType", mimeType);
+                    p.AddWithValue("@ShortCode", shortCode);
+                    p.AddWithValue("@CreatedAt", now);
+                    p.AddWithValue("@UpdatedAt", now);
+                }, tx);
 
             // Create short URL
-            await _db.ExecuteAsync(
+            await Db.ExecuteAsync(_db,
                 "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-                new { Code = shortCode, BucketId = bucketId, FilePath = normalized, CreatedAt = now }, tx);
+                p =>
+                {
+                    p.AddWithValue("@Code", shortCode);
+                    p.AddWithValue("@BucketId", bucketId);
+                    p.AddWithValue("@FilePath", normalized);
+                    p.AddWithValue("@CreatedAt", now);
+                }, tx);
 
             // Update bucket stats
-            await _db.ExecuteAsync(
+            await Db.ExecuteAsync(_db,
                 "UPDATE Buckets SET FileCount = FileCount + 1, TotalSize = TotalSize + @size, LastUsedAt = @now WHERE Id = @bucketId",
-                new { size, now, bucketId }, tx);
+                p =>
+                {
+                    p.AddWithValue("@size", size);
+                    p.AddWithValue("@now", now);
+                    p.AddWithValue("@bucketId", bucketId);
+                }, tx);
 
             tx.Commit();
 

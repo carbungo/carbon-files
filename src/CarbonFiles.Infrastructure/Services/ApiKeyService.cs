@@ -7,7 +7,7 @@ using CarbonFiles.Core.Models.Responses;
 using CarbonFiles.Core.Utilities;
 using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
-using Dapper;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace CarbonFiles.Infrastructure.Services;
@@ -32,9 +32,15 @@ public sealed class ApiKeyService : IApiKeyService
         var hashed = HashSecret(secret);
 
         var now = DateTime.UtcNow;
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ApiKeys (Prefix, HashedSecret, Name, CreatedAt) VALUES (@Prefix, @HashedSecret, @Name, @CreatedAt)",
-            new { Prefix = prefix, HashedSecret = hashed, Name = name, CreatedAt = now });
+            p =>
+            {
+                p.AddWithValue("@Prefix", prefix);
+                p.AddWithValue("@HashedSecret", hashed);
+                p.AddWithValue("@Name", name);
+                p.AddWithValue("@CreatedAt", now);
+            });
 
         _logger.LogInformation("Created API key {Prefix} with name {Name}", prefix, name);
 
@@ -49,7 +55,7 @@ public sealed class ApiKeyService : IApiKeyService
 
     public async Task<PaginatedResponse<ApiKeyListItem>> ListAsync(PaginationParams pagination)
     {
-        var total = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM ApiKeys");
+        var total = await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM ApiKeys");
 
         // Sort column mapping (whitelist to prevent SQL injection)
         var sortColumn = pagination.Sort?.ToLowerInvariant() switch
@@ -63,16 +69,23 @@ public sealed class ApiKeyService : IApiKeyService
         var sortDir = pagination.Order?.ToLowerInvariant() == "asc" ? "ASC" : "DESC";
 
         // Get bucket stats grouped by owner key prefix
-        var stats = (await _db.QueryAsync<BucketStats>(
-            "SELECT OwnerKeyPrefix AS Prefix, COUNT(*) AS BucketCount, SUM(FileCount) AS FileCount, SUM(TotalSize) AS TotalSize FROM Buckets WHERE OwnerKeyPrefix IS NOT NULL GROUP BY OwnerKeyPrefix"
-        )).AsList();
+        var stats = await Db.QueryAsync(_db,
+            "SELECT OwnerKeyPrefix AS Prefix, COUNT(*) AS BucketCount, SUM(FileCount) AS FileCount, SUM(TotalSize) AS TotalSize FROM Buckets WHERE OwnerKeyPrefix IS NOT NULL GROUP BY OwnerKeyPrefix",
+            null,
+            r => new BucketStats
+            {
+                Prefix = r.GetString(r.GetOrdinal("Prefix")),
+                BucketCount = r.GetInt32(r.GetOrdinal("BucketCount")),
+                FileCount = r.GetInt32(r.GetOrdinal("FileCount")),
+                TotalSize = r.GetInt64(r.GetOrdinal("TotalSize")),
+            });
         var statsLookup = stats.ToDictionary(s => s.Prefix);
 
         List<ApiKeyEntity> keys;
         if (isTotalSizeSort)
         {
             // For total_size sort, we need all keys and sort in memory
-            keys = (await _db.QueryAsync<ApiKeyEntity>("SELECT * FROM ApiKeys")).AsList();
+            keys = await Db.QueryAsync(_db, "SELECT * FROM ApiKeys", null, ApiKeyEntity.Read);
             keys = (sortDir == "ASC"
                 ? keys.OrderBy(k => statsLookup.TryGetValue(k.Prefix, out var s) ? s.TotalSize : 0)
                 : keys.OrderByDescending(k => statsLookup.TryGetValue(k.Prefix, out var s) ? s.TotalSize : 0))
@@ -83,7 +96,13 @@ public sealed class ApiKeyService : IApiKeyService
         else
         {
             var sql = $"SELECT * FROM ApiKeys ORDER BY {sortColumn} {sortDir} LIMIT @Limit OFFSET @Offset";
-            keys = (await _db.QueryAsync<ApiKeyEntity>(sql, new { pagination.Limit, pagination.Offset })).AsList();
+            keys = await Db.QueryAsync(_db, sql,
+                p =>
+                {
+                    p.AddWithValue("@Limit", pagination.Limit);
+                    p.AddWithValue("@Offset", pagination.Offset);
+                },
+                ApiKeyEntity.Read);
         }
 
         var items = keys.Select(k =>
@@ -103,7 +122,8 @@ public sealed class ApiKeyService : IApiKeyService
 
     public async Task<bool> DeleteAsync(string prefix)
     {
-        var rows = await _db.ExecuteAsync("DELETE FROM ApiKeys WHERE Prefix = @prefix", new { prefix });
+        var rows = await Db.ExecuteAsync(_db, "DELETE FROM ApiKeys WHERE Prefix = @prefix",
+            p => p.AddWithValue("@prefix", prefix));
         if (rows == 0)
         {
             _logger.LogDebug("API key {Prefix} not found for deletion", prefix);
@@ -116,26 +136,40 @@ public sealed class ApiKeyService : IApiKeyService
 
     public async Task<ApiKeyUsageResponse?> GetUsageAsync(string prefix)
     {
-        var entity = await _db.QueryFirstOrDefaultAsync<ApiKeyEntity>(
-            "SELECT * FROM ApiKeys WHERE Prefix = @prefix", new { prefix });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM ApiKeys WHERE Prefix = @prefix",
+            p => p.AddWithValue("@prefix", prefix),
+            ApiKeyEntity.Read);
         if (entity == null)
         {
             _logger.LogDebug("API key {Prefix} not found for usage query", prefix);
             return null;
         }
 
-        var buckets = (await _db.QueryAsync<Bucket>(
+        var buckets = await Db.QueryAsync(_db,
             """
             SELECT Id, Name, Owner, Description, CreatedAt, ExpiresAt, LastUsedAt, FileCount, TotalSize
             FROM Buckets WHERE OwnerKeyPrefix = @prefix
             """,
-            new { prefix })).AsList();
+            p => p.AddWithValue("@prefix", prefix),
+            r => new Bucket
+            {
+                Id = r.GetString(r.GetOrdinal("Id")),
+                Name = r.GetString(r.GetOrdinal("Name")),
+                Owner = r.GetString(r.GetOrdinal("Owner")),
+                Description = r.IsDBNull(r.GetOrdinal("Description")) ? null : r.GetString(r.GetOrdinal("Description")),
+                CreatedAt = r.GetDateTime(r.GetOrdinal("CreatedAt")),
+                ExpiresAt = r.IsDBNull(r.GetOrdinal("ExpiresAt")) ? null : r.GetDateTime(r.GetOrdinal("ExpiresAt")),
+                LastUsedAt = r.IsDBNull(r.GetOrdinal("LastUsedAt")) ? null : r.GetDateTime(r.GetOrdinal("LastUsedAt")),
+                FileCount = r.GetInt32(r.GetOrdinal("FileCount")),
+                TotalSize = r.GetInt64(r.GetOrdinal("TotalSize")),
+            });
 
         var totalFiles = buckets.Sum(b => b.FileCount);
         var totalSize = buckets.Sum(b => b.TotalSize);
-        var totalDownloads = await _db.ExecuteScalarAsync<long>(
+        var totalDownloads = await Db.ExecuteScalarAsync<long>(_db,
             "SELECT COALESCE(SUM(DownloadCount), 0) FROM Buckets WHERE OwnerKeyPrefix = @prefix",
-            new { prefix });
+            p => p.AddWithValue("@prefix", prefix));
 
         return new ApiKeyUsageResponse
         {
@@ -164,8 +198,10 @@ public sealed class ApiKeyService : IApiKeyService
         var prefix = $"cf4_{parts[1]}";
         var secret = parts[2];
 
-        var entity = await _db.QueryFirstOrDefaultAsync<ApiKeyEntity>(
-            "SELECT * FROM ApiKeys WHERE Prefix = @prefix", new { prefix });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM ApiKeys WHERE Prefix = @prefix",
+            p => p.AddWithValue("@prefix", prefix),
+            ApiKeyEntity.Read);
         if (entity == null)
         {
             _logger.LogDebug("API key validation failed: prefix {Prefix} not found", prefix);

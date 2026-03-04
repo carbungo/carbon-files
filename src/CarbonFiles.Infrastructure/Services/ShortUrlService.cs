@@ -2,8 +2,9 @@ using System.Data;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Utilities;
+using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
-using Dapper;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace CarbonFiles.Infrastructure.Services;
@@ -29,8 +30,9 @@ public sealed class ShortUrlService : IShortUrlService
         {
             var code = IdGenerator.GenerateShortCode();
 
-            var exists = await _db.ExecuteScalarAsync<int>(
-                "SELECT COUNT(*) FROM ShortUrls WHERE Code = @code", new { code }) > 0;
+            var exists = await Db.ExecuteScalarAsync<int>(_db,
+                "SELECT COUNT(*) FROM ShortUrls WHERE Code = @code",
+                p => p.AddWithValue("@code", code)) > 0;
             if (exists)
             {
                 _logger.LogDebug("Short code collision, retrying (attempt {Attempt})", attempt + 1);
@@ -38,9 +40,15 @@ public sealed class ShortUrlService : IShortUrlService
             }
 
             var now = DateTime.UtcNow;
-            await _db.ExecuteAsync(
+            await Db.ExecuteAsync(_db,
                 "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@code, @bucketId, @filePath, @now)",
-                new { code, bucketId, filePath, now });
+                p =>
+                {
+                    p.AddWithValue("@code", code);
+                    p.AddWithValue("@bucketId", bucketId);
+                    p.AddWithValue("@filePath", filePath);
+                    p.AddWithValue("@now", now);
+                });
 
             _cache.SetShortUrl(code, bucketId, filePath);
             _logger.LogInformation("Created short URL {Code} for bucket {BucketId} file {FilePath}", code, bucketId, filePath);
@@ -57,8 +65,10 @@ public sealed class ShortUrlService : IShortUrlService
         if (cached != null)
             return $"/api/buckets/{cached.Value.BucketId}/files/{cached.Value.FilePath}/content";
 
-        var shortUrl = await _db.QueryFirstOrDefaultAsync<ShortUrlEntity>(
-            "SELECT Code, BucketId, FilePath, CreatedAt FROM ShortUrls WHERE Code = @code", new { code });
+        var shortUrl = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT Code, BucketId, FilePath, CreatedAt FROM ShortUrls WHERE Code = @code",
+            p => p.AddWithValue("@code", code),
+            ShortUrlEntity.Read);
         if (shortUrl == null)
         {
             _logger.LogDebug("Short URL {Code} not found", code);
@@ -66,8 +76,10 @@ public sealed class ShortUrlService : IShortUrlService
         }
 
         // Verify the associated bucket hasn't expired
-        var bucket = await _db.QueryFirstOrDefaultAsync<BucketEntity>(
-            "SELECT * FROM Buckets WHERE Id = @Id", new { Id = shortUrl.BucketId });
+        var bucket = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM Buckets WHERE Id = @Id",
+            p => p.AddWithValue("@Id", shortUrl.BucketId),
+            BucketEntity.Read);
         if (bucket == null)
             return null;
 
@@ -83,21 +95,26 @@ public sealed class ShortUrlService : IShortUrlService
 
     public async Task<bool> DeleteAsync(string code, AuthContext auth)
     {
-        var shortUrl = await _db.QueryFirstOrDefaultAsync<ShortUrlEntity>(
-            "SELECT Code, BucketId, FilePath, CreatedAt FROM ShortUrls WHERE Code = @code", new { code });
+        var shortUrl = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT Code, BucketId, FilePath, CreatedAt FROM ShortUrls WHERE Code = @code",
+            p => p.AddWithValue("@code", code),
+            ShortUrlEntity.Read);
         if (shortUrl == null)
             return false;
 
         // Find the bucket owner and verify auth can manage
-        var bucket = await _db.QueryFirstOrDefaultAsync<BucketEntity>(
-            "SELECT * FROM Buckets WHERE Id = @Id", new { Id = shortUrl.BucketId });
+        var bucket = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM Buckets WHERE Id = @Id",
+            p => p.AddWithValue("@Id", shortUrl.BucketId),
+            BucketEntity.Read);
         if (bucket == null)
             return false;
 
         if (!auth.CanManage(bucket.Owner))
             return false;
 
-        await _db.ExecuteAsync("DELETE FROM ShortUrls WHERE Code = @code", new { code });
+        await Db.ExecuteAsync(_db, "DELETE FROM ShortUrls WHERE Code = @code",
+            p => p.AddWithValue("@code", code));
 
         _logger.LogInformation("Deleted short URL {Code}", code);
 

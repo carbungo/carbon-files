@@ -4,7 +4,6 @@ using CarbonFiles.Core.Models;
 using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
 using CarbonFiles.Infrastructure.Services;
-using Dapper;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,7 +20,7 @@ public class ShortUrlServiceTests : IDisposable
     {
         _db = new SqliteConnection("Data Source=:memory:");
         _db.Open();
-        _db.Execute(DatabaseInitializer.Schema);
+        DatabaseInitializer.Initialize(_db);
 
         _sut = new ShortUrlService(_db, new NullCacheService(), NullLogger<ShortUrlService>.Instance);
     }
@@ -43,8 +42,10 @@ public class ShortUrlServiceTests : IDisposable
 
         code.Should().HaveLength(6);
 
-        var entity = await _db.QueryFirstOrDefaultAsync<ShortUrlEntity>(
-            "SELECT Code, BucketId, FilePath, CreatedAt FROM ShortUrls WHERE Code = @code", new { code });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT Code, BucketId, FilePath, CreatedAt FROM ShortUrls WHERE Code = @code",
+            p => p.AddWithValue("@code", code),
+            ShortUrlEntity.Read);
         entity.Should().NotBeNull();
         entity!.BucketId.Should().Be("bucket0001");
         entity.FilePath.Should().Be("test.txt");
@@ -57,9 +58,15 @@ public class ShortUrlServiceTests : IDisposable
     public async Task ResolveAsync_ReturnsCorrectUrl()
     {
         await SeedBucketAsync("bucket0002");
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "abc123", BucketId = "bucket0002", FilePath = "hello.txt", CreatedAt = DateTime.UtcNow });
+            p =>
+            {
+                p.AddWithValue("@Code", "abc123");
+                p.AddWithValue("@BucketId", "bucket0002");
+                p.AddWithValue("@FilePath", "hello.txt");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+            });
 
         var url = await _sut.ResolveAsync("abc123");
 
@@ -69,12 +76,25 @@ public class ShortUrlServiceTests : IDisposable
     [Fact]
     public async Task ResolveAsync_ExpiredBucket_ReturnsNull()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "expired001", Name = "expired", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
-        await _db.ExecuteAsync(
+            p =>
+            {
+                p.AddWithValue("@Id", "expired001");
+                p.AddWithValue("@Name", "expired");
+                p.AddWithValue("@Owner", "admin");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10));
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1));
+            });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "exp123", BucketId = "expired001", FilePath = "file.txt", CreatedAt = DateTime.UtcNow });
+            p =>
+            {
+                p.AddWithValue("@Code", "exp123");
+                p.AddWithValue("@BucketId", "expired001");
+                p.AddWithValue("@FilePath", "file.txt");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+            });
 
         var url = await _sut.ResolveAsync("exp123");
 
@@ -93,9 +113,15 @@ public class ShortUrlServiceTests : IDisposable
     public async Task ResolveAsync_BucketDeleted_ReturnsNull()
     {
         // Short URL exists but bucket has been removed
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "orphan1", BucketId = "deleted001", FilePath = "orphan.txt", CreatedAt = DateTime.UtcNow });
+            p =>
+            {
+                p.AddWithValue("@Code", "orphan1");
+                p.AddWithValue("@BucketId", "deleted001");
+                p.AddWithValue("@FilePath", "orphan.txt");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+            });
 
         var url = await _sut.ResolveAsync("orphan1");
 
@@ -108,52 +134,84 @@ public class ShortUrlServiceTests : IDisposable
     public async Task DeleteAsync_RemovesShortUrl()
     {
         await SeedBucketAsync("bucket0003", "admin");
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "del123", BucketId = "bucket0003", FilePath = "file.txt", CreatedAt = DateTime.UtcNow });
+            p =>
+            {
+                p.AddWithValue("@Code", "del123");
+                p.AddWithValue("@BucketId", "bucket0003");
+                p.AddWithValue("@FilePath", "file.txt");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+            });
 
         var auth = AuthContext.Admin();
         var result = await _sut.DeleteAsync("del123", auth);
 
         result.Should().BeTrue();
-        var remaining = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM ShortUrls WHERE Code = 'del123'");
+        var remaining = await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM ShortUrls WHERE Code = 'del123'");
         remaining.Should().Be(0);
     }
 
     [Fact]
     public async Task DeleteAsync_NonOwner_ReturnsFalse()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "bucket0004", Name = "alice-bucket", Owner = "alice", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7) });
-        await _db.ExecuteAsync(
+            p =>
+            {
+                p.AddWithValue("@Id", "bucket0004");
+                p.AddWithValue("@Name", "alice-bucket");
+                p.AddWithValue("@Owner", "alice");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7));
+            });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "own123", BucketId = "bucket0004", FilePath = "file.txt", CreatedAt = DateTime.UtcNow });
+            p =>
+            {
+                p.AddWithValue("@Code", "own123");
+                p.AddWithValue("@BucketId", "bucket0004");
+                p.AddWithValue("@FilePath", "file.txt");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+            });
 
         var auth = AuthContext.Owner("bob", "cf4_bob12345");
         var result = await _sut.DeleteAsync("own123", auth);
 
         result.Should().BeFalse();
         // Short URL should still exist
-        var remaining = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM ShortUrls WHERE Code = 'own123'");
+        var remaining = await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM ShortUrls WHERE Code = 'own123'");
         remaining.Should().Be(1);
     }
 
     [Fact]
     public async Task DeleteAsync_OwnerCanDelete()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "bucket0005", Name = "alice-bucket", Owner = "alice", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7) });
-        await _db.ExecuteAsync(
+            p =>
+            {
+                p.AddWithValue("@Id", "bucket0005");
+                p.AddWithValue("@Name", "alice-bucket");
+                p.AddWithValue("@Owner", "alice");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7));
+            });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "own456", BucketId = "bucket0005", FilePath = "file.txt", CreatedAt = DateTime.UtcNow });
+            p =>
+            {
+                p.AddWithValue("@Code", "own456");
+                p.AddWithValue("@BucketId", "bucket0005");
+                p.AddWithValue("@FilePath", "file.txt");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+            });
 
         var auth = AuthContext.Owner("alice", "cf4_alice123");
         var result = await _sut.DeleteAsync("own456", auth);
 
         result.Should().BeTrue();
-        var remaining = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM ShortUrls WHERE Code = 'own456'");
+        var remaining = await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM ShortUrls WHERE Code = 'own456'");
         remaining.Should().Be(0);
     }
 
@@ -170,9 +228,15 @@ public class ShortUrlServiceTests : IDisposable
     public async Task DeleteAsync_BucketDeleted_ReturnsFalse()
     {
         // Short URL exists but bucket is gone
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "orphn2", BucketId = "deleted002", FilePath = "orphan.txt", CreatedAt = DateTime.UtcNow });
+            p =>
+            {
+                p.AddWithValue("@Code", "orphn2");
+                p.AddWithValue("@BucketId", "deleted002");
+                p.AddWithValue("@FilePath", "orphan.txt");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+            });
 
         var auth = AuthContext.Admin();
         var result = await _sut.DeleteAsync("orphn2", auth);
@@ -184,8 +248,15 @@ public class ShortUrlServiceTests : IDisposable
 
     private async Task SeedBucketAsync(string bucketId, string owner = "admin")
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = bucketId, Name = $"bucket-{bucketId}", Owner = owner, CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7) });
+            p =>
+            {
+                p.AddWithValue("@Id", bucketId);
+                p.AddWithValue("@Name", $"bucket-{bucketId}");
+                p.AddWithValue("@Owner", owner);
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7));
+            });
     }
 }

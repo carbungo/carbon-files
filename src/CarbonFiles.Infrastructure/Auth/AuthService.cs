@@ -2,8 +2,9 @@ using System.Data;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Configuration;
+using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
-using Dapper;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -85,8 +86,10 @@ public sealed class AuthService : IAuthService
         var prefix = $"cf4_{parts[1]}";
         var secret = parts[2];
 
-        var entity = await _db.QueryFirstOrDefaultAsync<ApiKeyEntity>(
-            "SELECT * FROM ApiKeys WHERE Prefix = @prefix", new { prefix });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM ApiKeys WHERE Prefix = @prefix",
+            p => p.AddWithValue("@prefix", prefix),
+            ApiKeyEntity.Read);
         if (entity == null) return null;
 
         var hashed = Convert.ToHexStringLower(
@@ -96,9 +99,13 @@ public sealed class AuthService : IAuthService
         if (hashed != entity.HashedSecret) return null;
 
         // Update last_used_at
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "UPDATE ApiKeys SET LastUsedAt = @now WHERE Prefix = @prefix",
-            new { now = DateTime.UtcNow, prefix });
+            p =>
+            {
+                p.AddWithValue("@now", DateTime.UtcNow);
+                p.AddWithValue("@prefix", prefix);
+            });
 
         return (entity.Name, entity.Prefix);
     }

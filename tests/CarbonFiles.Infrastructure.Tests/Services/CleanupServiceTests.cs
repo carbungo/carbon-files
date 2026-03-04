@@ -4,7 +4,6 @@ using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
 using CarbonFiles.Infrastructure.Services;
-using Dapper;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,7 +32,7 @@ public class CleanupServiceTests : IDisposable
         _keepAliveConnection.Open();
 
         // Create schema
-        _keepAliveConnection.Execute(DatabaseInitializer.Schema);
+        DatabaseInitializer.Initialize(_keepAliveConnection);
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"cf_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
@@ -77,85 +76,75 @@ public class CleanupServiceTests : IDisposable
     [Fact]
     public async Task CleanupExpiredBucketsAsync_RemovesExpiredBucket()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "exp0000001", Name = "expired-bucket", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "exp0000001"); p.AddWithValue("@Name", "expired-bucket"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1)); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'exp0000001'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM Buckets WHERE Id = 'exp0000001'").Should().Be(0);
     }
 
     [Fact]
     public async Task CleanupExpiredBucketsAsync_DoesNotRemoveActiveBucket()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "act0000001", Name = "active-bucket", Owner = "admin", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7) });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "act0000001"); p.AddWithValue("@Name", "active-bucket"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7)); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'act0000001'").Should().Be(1);
+        ScalarInt("SELECT COUNT(*) FROM Buckets WHERE Id = 'act0000001'").Should().Be(1);
     }
 
     [Fact]
     public async Task CleanupExpiredBucketsAsync_DoesNotRemoveNeverExpireBucket()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
-            new { Id = "nev0000001", Name = "never-expire", Owner = "admin", CreatedAt = DateTime.UtcNow });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
+            p => { p.AddWithValue("@Id", "nev0000001"); p.AddWithValue("@Name", "never-expire"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'nev0000001'").Should().Be(1);
+        ScalarInt("SELECT COUNT(*) FROM Buckets WHERE Id = 'nev0000001'").Should().Be(1);
     }
 
     [Fact]
     public async Task CleanupExpiredBucketsAsync_RemovesAssociatedFiles()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt, @FileCount, @TotalSize)",
-            new { Id = "exp0000002", Name = "expired-with-files", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1), FileCount = 2, TotalSize = 200L });
-        _keepAliveConnection.Execute(
-            "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
-            new { BucketId = "exp0000002", Path = "file1.txt", Name = "file1.txt", Size = 100L, MimeType = "text/plain", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
-        _keepAliveConnection.Execute(
-            "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
-            new { BucketId = "exp0000002", Path = "file2.txt", Name = "file2.txt", Size = 100L, MimeType = "text/plain", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt, @FileCount, @TotalSize)",
+            p => { p.AddWithValue("@Id", "exp0000002"); p.AddWithValue("@Name", "expired-with-files"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1)); p.AddWithValue("@FileCount", 2); p.AddWithValue("@TotalSize", 200L); });
+        Execute("INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
+            p => { p.AddWithValue("@BucketId", "exp0000002"); p.AddWithValue("@Path", "file1.txt"); p.AddWithValue("@Name", "file1.txt"); p.AddWithValue("@Size", 100L); p.AddWithValue("@MimeType", "text/plain"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
+        Execute("INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
+            p => { p.AddWithValue("@BucketId", "exp0000002"); p.AddWithValue("@Path", "file2.txt"); p.AddWithValue("@Name", "file2.txt"); p.AddWithValue("@Size", 100L); p.AddWithValue("@MimeType", "text/plain"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Files WHERE BucketId = 'exp0000002'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM Files WHERE BucketId = 'exp0000002'").Should().Be(0);
     }
 
     [Fact]
     public async Task CleanupExpiredBucketsAsync_RemovesAssociatedShortUrls()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "exp0000003", Name = "expired-with-urls", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
-        _keepAliveConnection.Execute(
-            "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "abc123", BucketId = "exp0000003", FilePath = "file.txt", CreatedAt = DateTime.UtcNow });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "exp0000003"); p.AddWithValue("@Name", "expired-with-urls"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1)); });
+        Execute("INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
+            p => { p.AddWithValue("@Code", "abc123"); p.AddWithValue("@BucketId", "exp0000003"); p.AddWithValue("@FilePath", "file.txt"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM ShortUrls WHERE BucketId = 'exp0000003'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM ShortUrls WHERE BucketId = 'exp0000003'").Should().Be(0);
     }
 
     [Fact]
     public async Task CleanupExpiredBucketsAsync_RemovesAssociatedUploadTokens()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "exp0000004", Name = "expired-with-tokens", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
-        _keepAliveConnection.Execute(
-            "INSERT INTO UploadTokens (Token, BucketId, ExpiresAt, CreatedAt) VALUES (@Token, @BucketId, @ExpiresAt, @CreatedAt)",
-            new { Token = "cfu_testtoken1234567890123456789012345678901234", BucketId = "exp0000004", ExpiresAt = DateTime.UtcNow.AddDays(1), CreatedAt = DateTime.UtcNow });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "exp0000004"); p.AddWithValue("@Name", "expired-with-tokens"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1)); });
+        Execute("INSERT INTO UploadTokens (Token, BucketId, ExpiresAt, CreatedAt) VALUES (@Token, @BucketId, @ExpiresAt, @CreatedAt)",
+            p => { p.AddWithValue("@Token", "cfu_testtoken1234567890123456789012345678901234"); p.AddWithValue("@BucketId", "exp0000004"); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(1)); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM UploadTokens WHERE BucketId = 'exp0000004'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM UploadTokens WHERE BucketId = 'exp0000004'").Should().Be(0);
     }
 
     [Fact]
@@ -165,9 +154,8 @@ public class CleanupServiceTests : IDisposable
         Directory.CreateDirectory(bucketDir);
         File.WriteAllText(Path.Combine(bucketDir, "test.txt"), "hello");
 
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "exp0000005", Name = "expired-with-dir", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "exp0000005"); p.AddWithValue("@Name", "expired-with-dir"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1)); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
@@ -177,44 +165,39 @@ public class CleanupServiceTests : IDisposable
     [Fact]
     public async Task CleanupExpiredBucketsAsync_NoExpiredBuckets_DoesNothing()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "act0000002", Name = "still-active", Owner = "admin", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(30) });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "act0000002"); p.AddWithValue("@Name", "still-active"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(30)); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Buckets").Should().Be(1);
+        ScalarInt("SELECT COUNT(*) FROM Buckets").Should().Be(1);
     }
 
     [Fact]
     public async Task CleanupExpiredBucketsAsync_OnlyRemovesExpired_LeavesActive()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "exp0000006", Name = "expired", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "act0000003", Name = "active", Owner = "admin", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7) });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "exp0000006"); p.AddWithValue("@Name", "expired"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1)); });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "act0000003"); p.AddWithValue("@Name", "active"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7)); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'exp0000006'").Should().Be(0);
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'act0000003'").Should().Be(1);
+        ScalarInt("SELECT COUNT(*) FROM Buckets WHERE Id = 'exp0000006'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM Buckets WHERE Id = 'act0000003'").Should().Be(1);
     }
 
     [Fact]
     public async Task CleanupExpiredBucketsAsync_RemovesMultipleExpiredBuckets()
     {
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "exp0000007", Name = "expired-1", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-2) });
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "exp0000008", Name = "expired-2", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-5), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "exp0000007"); p.AddWithValue("@Name", "expired-1"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-2)); });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
+            p => { p.AddWithValue("@Id", "exp0000008"); p.AddWithValue("@Name", "expired-2"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-5)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1)); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Buckets").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM Buckets").Should().Be(0);
     }
 
     [Fact]
@@ -225,28 +208,41 @@ public class CleanupServiceTests : IDisposable
         Directory.CreateDirectory(bucketDir);
         File.WriteAllText(Path.Combine(bucketDir, "data.bin"), "test data");
 
-        _keepAliveConnection.Execute(
-            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt, @FileCount, @TotalSize)",
-            new { Id = "exp0000009", Name = "full-cleanup", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1), FileCount = 1, TotalSize = 100L });
-        _keepAliveConnection.Execute(
-            "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
-            new { BucketId = "exp0000009", Path = "data.bin", Name = "data.bin", Size = 100L, MimeType = "application/octet-stream", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
-        _keepAliveConnection.Execute(
-            "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "xyz789", BucketId = "exp0000009", FilePath = "data.bin", CreatedAt = DateTime.UtcNow });
-        _keepAliveConnection.Execute(
-            "INSERT INTO UploadTokens (Token, BucketId, ExpiresAt, CreatedAt) VALUES (@Token, @BucketId, @ExpiresAt, @CreatedAt)",
-            new { Token = "cfu_fullcleanup12345678901234567890123456789012", BucketId = "exp0000009", ExpiresAt = DateTime.UtcNow.AddDays(1), CreatedAt = DateTime.UtcNow });
+        Execute("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt, @FileCount, @TotalSize)",
+            p => { p.AddWithValue("@Id", "exp0000009"); p.AddWithValue("@Name", "full-cleanup"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1)); p.AddWithValue("@FileCount", 1); p.AddWithValue("@TotalSize", 100L); });
+        Execute("INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
+            p => { p.AddWithValue("@BucketId", "exp0000009"); p.AddWithValue("@Path", "data.bin"); p.AddWithValue("@Name", "data.bin"); p.AddWithValue("@Size", 100L); p.AddWithValue("@MimeType", "application/octet-stream"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
+        Execute("INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
+            p => { p.AddWithValue("@Code", "xyz789"); p.AddWithValue("@BucketId", "exp0000009"); p.AddWithValue("@FilePath", "data.bin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
+        Execute("INSERT INTO UploadTokens (Token, BucketId, ExpiresAt, CreatedAt) VALUES (@Token, @BucketId, @ExpiresAt, @CreatedAt)",
+            p => { p.AddWithValue("@Token", "cfu_fullcleanup12345678901234567890123456789012"); p.AddWithValue("@BucketId", "exp0000009"); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(1)); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         await _sut.CleanupExpiredBucketsAsync(TestContext.Current.CancellationToken);
 
         // All database records should be gone
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'exp0000009'").Should().Be(0);
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM Files WHERE BucketId = 'exp0000009'").Should().Be(0);
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM ShortUrls WHERE BucketId = 'exp0000009'").Should().Be(0);
-        _keepAliveConnection.ExecuteScalar<int>("SELECT COUNT(*) FROM UploadTokens WHERE BucketId = 'exp0000009'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM Buckets WHERE Id = 'exp0000009'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM Files WHERE BucketId = 'exp0000009'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM ShortUrls WHERE BucketId = 'exp0000009'").Should().Be(0);
+        ScalarInt("SELECT COUNT(*) FROM UploadTokens WHERE BucketId = 'exp0000009'").Should().Be(0);
 
         // Directory should be gone
         Directory.Exists(bucketDir).Should().BeFalse();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private void Execute(string sql, Action<SqliteParameterCollection> parameters)
+    {
+        using var cmd = _keepAliveConnection.CreateCommand();
+        cmd.CommandText = sql;
+        parameters(cmd.Parameters);
+        cmd.ExecuteNonQuery();
+    }
+
+    private int ScalarInt(string sql)
+    {
+        using var cmd = _keepAliveConnection.CreateCommand();
+        cmd.CommandText = sql;
+        return Convert.ToInt32(cmd.ExecuteScalar());
     }
 }

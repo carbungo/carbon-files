@@ -1,5 +1,5 @@
 using System.Data;
-using Dapper;
+using Microsoft.Data.Sqlite;
 
 namespace CarbonFiles.Infrastructure.Data;
 
@@ -75,7 +75,14 @@ public static class DatabaseInitializer
 
     public static void Initialize(IDbConnection db)
     {
-        db.Execute("PRAGMA journal_mode=WAL;");
-        db.Execute(Schema);
+        var sqlite = (SqliteConnection)db;
+
+        using var pragmaCmd = sqlite.CreateCommand();
+        pragmaCmd.CommandText = "PRAGMA journal_mode=WAL;";
+        pragmaCmd.ExecuteNonQuery();
+
+        using var schemaCmd = sqlite.CreateCommand();
+        schemaCmd.CommandText = Schema;
+        schemaCmd.ExecuteNonQuery();
     }
 }

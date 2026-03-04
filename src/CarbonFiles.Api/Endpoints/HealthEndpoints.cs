@@ -1,7 +1,7 @@
 using System.Data;
 using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Models.Responses;
-using Dapper;
+using Microsoft.Data.Sqlite;
 
 namespace CarbonFiles.Api.Endpoints;
 
@@ -16,7 +16,10 @@ public static class HealthEndpoints
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.HealthEndpoints");
             try
             {
-                await db.ExecuteScalarAsync<int>("SELECT 1");
+                var sqlite = (SqliteConnection)db;
+                using var cmd = sqlite.CreateCommand();
+                cmd.CommandText = "SELECT 1";
+                await cmd.ExecuteScalarAsync();
 
                 return Results.Ok(new HealthResponse
                 {

@@ -3,7 +3,7 @@ using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
-using Dapper;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace CarbonFiles.Infrastructure.Services;
@@ -29,8 +29,9 @@ public sealed class FileService : IFileService
     {
         _logger.LogDebug("Listing files in bucket {BucketId} (limit={Limit}, offset={Offset})", bucketId, pagination.Limit, pagination.Offset);
 
-        var total = await _db.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM Files WHERE BucketId = @bucketId", new { bucketId });
+        var total = await Db.ExecuteScalarAsync<int>(_db,
+            "SELECT COUNT(*) FROM Files WHERE BucketId = @bucketId",
+            p => p.AddWithValue("@bucketId", bucketId));
 
         // Sort column mapping (whitelist to prevent SQL injection)
         var sortColumn = pagination.Sort?.ToLowerInvariant() switch
@@ -46,7 +47,14 @@ public sealed class FileService : IFileService
         var sortDir = pagination.Order?.ToLowerInvariant() == "asc" ? "ASC" : "DESC";
 
         var sql = $"SELECT * FROM Files WHERE BucketId = @bucketId ORDER BY {sortColumn} {sortDir} LIMIT @Limit OFFSET @Offset";
-        var entities = (await _db.QueryAsync<FileEntity>(sql, new { bucketId, pagination.Limit, pagination.Offset })).AsList();
+        var entities = await Db.QueryAsync(_db, sql,
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                p.AddWithValue("@Limit", pagination.Limit);
+                p.AddWithValue("@Offset", pagination.Offset);
+            },
+            FileEntity.Read);
         var items = entities.Select(f => f.ToBucketFile()).ToList();
 
         return new PaginatedResponse<BucketFile>
@@ -65,9 +73,14 @@ public sealed class FileService : IFileService
             return cached;
 
         var normalized = path.ToLowerInvariant();
-        var entity = await _db.QueryFirstOrDefaultAsync<FileEntity>(
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
             "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
-            new { bucketId, normalized });
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                p.AddWithValue("@normalized", normalized);
+            },
+            FileEntity.Read);
         if (entity == null)
         {
             _logger.LogDebug("File {Path} not found in bucket {BucketId}", path, bucketId);
@@ -84,8 +97,10 @@ public sealed class FileService : IFileService
         var normalized = path.ToLowerInvariant();
 
         // Check bucket ownership
-        var bucket = await _db.QueryFirstOrDefaultAsync<BucketEntity>(
-            "SELECT * FROM Buckets WHERE Id = @bucketId", new { bucketId });
+        var bucket = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM Buckets WHERE Id = @bucketId",
+            p => p.AddWithValue("@bucketId", bucketId),
+            BucketEntity.Read);
         if (bucket == null)
             return false;
 
@@ -95,9 +110,14 @@ public sealed class FileService : IFileService
             return false;
         }
 
-        var entity = await _db.QueryFirstOrDefaultAsync<FileEntity>(
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
             "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
-            new { bucketId, normalized });
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                p.AddWithValue("@normalized", normalized);
+            },
+            FileEntity.Read);
         if (entity == null)
             return false;
 
@@ -106,16 +126,25 @@ public sealed class FileService : IFileService
 
         // Delete associated short URL
         if (entity.ShortCode != null)
-            await _db.ExecuteAsync("DELETE FROM ShortUrls WHERE Code = @ShortCode", new { entity.ShortCode }, tx);
+            await Db.ExecuteAsync(_db, "DELETE FROM ShortUrls WHERE Code = @ShortCode",
+                p => p.AddWithValue("@ShortCode", entity.ShortCode), tx);
 
         // Update bucket stats
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "UPDATE Buckets SET FileCount = MAX(0, FileCount - 1), TotalSize = MAX(0, TotalSize - @Size) WHERE Id = @bucketId",
-            new { entity.Size, bucketId }, tx);
+            p =>
+            {
+                p.AddWithValue("@Size", entity.Size);
+                p.AddWithValue("@bucketId", bucketId);
+            }, tx);
 
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "DELETE FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
-            new { bucketId, normalized }, tx);
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                p.AddWithValue("@normalized", normalized);
+            }, tx);
 
         tx.Commit();
 
@@ -133,17 +162,26 @@ public sealed class FileService : IFileService
 
     public async Task UpdateLastUsedAsync(string bucketId)
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "UPDATE Buckets SET LastUsedAt = @now WHERE Id = @bucketId",
-            new { now = DateTime.UtcNow, bucketId });
+            p =>
+            {
+                p.AddWithValue("@now", DateTime.UtcNow);
+                p.AddWithValue("@bucketId", bucketId);
+            });
     }
 
     public async Task<bool> UpdateFileSizeAsync(string bucketId, string path, long newSize)
     {
         var normalized = path.ToLowerInvariant();
-        var entity = await _db.QueryFirstOrDefaultAsync<FileEntity>(
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
             "SELECT * FROM Files WHERE BucketId = @bucketId AND Path = @normalized",
-            new { bucketId, normalized });
+            p =>
+            {
+                p.AddWithValue("@bucketId", bucketId);
+                p.AddWithValue("@normalized", normalized);
+            },
+            FileEntity.Read);
         if (entity == null)
             return false;
 
@@ -152,14 +190,25 @@ public sealed class FileService : IFileService
 
         using var tx = _db.BeginTransaction();
 
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "UPDATE Files SET Size = @newSize, UpdatedAt = @now WHERE BucketId = @bucketId AND Path = @normalized",
-            new { newSize, now, bucketId, normalized }, tx);
+            p =>
+            {
+                p.AddWithValue("@newSize", newSize);
+                p.AddWithValue("@now", now);
+                p.AddWithValue("@bucketId", bucketId);
+                p.AddWithValue("@normalized", normalized);
+            }, tx);
 
         // Update bucket total size
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "UPDATE Buckets SET TotalSize = MAX(0, TotalSize - @oldSize + @newSize) WHERE Id = @bucketId",
-            new { oldSize, newSize, bucketId }, tx);
+            p =>
+            {
+                p.AddWithValue("@oldSize", oldSize);
+                p.AddWithValue("@newSize", newSize);
+                p.AddWithValue("@bucketId", bucketId);
+            }, tx);
 
         tx.Commit();
 

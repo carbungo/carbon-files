@@ -6,7 +6,6 @@ using CarbonFiles.Core.Models.Responses;
 using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
 using CarbonFiles.Infrastructure.Services;
-using Dapper;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -57,7 +56,7 @@ public class BucketServiceTests : IDisposable
     {
         _db = new SqliteConnection("Data Source=:memory:");
         _db.Open();
-        _db.Execute(DatabaseInitializer.Schema);
+        DatabaseInitializer.Initialize(_db);
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"cf_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
@@ -163,8 +162,10 @@ public class BucketServiceTests : IDisposable
 
         var result = await _sut.CreateAsync(request, auth);
 
-        var entity = await _db.QueryFirstOrDefaultAsync<BucketEntity>(
-            "SELECT * FROM Buckets WHERE Id = @Id", new { result.Id });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM Buckets WHERE Id = @Id",
+            p => p.AddWithValue("@Id", result.Id),
+            BucketEntity.Read);
         entity.Should().NotBeNull();
         entity!.Name.Should().Be("stored");
         entity.Description.Should().Be("desc");
@@ -179,8 +180,10 @@ public class BucketServiceTests : IDisposable
 
         var result = await _sut.CreateAsync(request, auth);
 
-        var entity = await _db.QueryFirstOrDefaultAsync<BucketEntity>(
-            "SELECT * FROM Buckets WHERE Id = @Id", new { result.Id });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM Buckets WHERE Id = @Id",
+            p => p.AddWithValue("@Id", result.Id),
+            BucketEntity.Read);
         entity!.OwnerKeyPrefix.Should().Be("cf4_aabbccdd");
     }
 
@@ -213,12 +216,26 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task ListAsync_ExcludesExpiredByDefault()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "expired001", Name = "expired", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
-        await _db.ExecuteAsync(
+            p =>
+            {
+                p.AddWithValue("@Id", "expired001");
+                p.AddWithValue("@Name", "expired");
+                p.AddWithValue("@Owner", "admin");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10));
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1));
+            });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "valid00001", Name = "valid", Owner = "admin", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7) });
+            p =>
+            {
+                p.AddWithValue("@Id", "valid00001");
+                p.AddWithValue("@Name", "valid");
+                p.AddWithValue("@Owner", "admin");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7));
+            });
 
         var auth = AuthContext.Admin();
         var result = await _sut.ListAsync(new PaginationParams(), auth, includeExpired: false);
@@ -230,12 +247,26 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task ListAsync_IncludeExpiredShowsAll()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "expired002", Name = "expired-inc", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
-        await _db.ExecuteAsync(
+            p =>
+            {
+                p.AddWithValue("@Id", "expired002");
+                p.AddWithValue("@Name", "expired-inc");
+                p.AddWithValue("@Owner", "admin");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10));
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1));
+            });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "valid00002", Name = "valid-inc", Owner = "admin", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7) });
+            p =>
+            {
+                p.AddWithValue("@Id", "valid00002");
+                p.AddWithValue("@Name", "valid-inc");
+                p.AddWithValue("@Owner", "admin");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7));
+            });
 
         var auth = AuthContext.Admin();
         var result = await _sut.ListAsync(new PaginationParams(), auth, includeExpired: true);
@@ -276,12 +307,12 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task ListAsync_SortByTotalSize()
     {
-        await _db.ExecuteAsync("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @TotalSize)",
-            new { Id = "size00001", Name = "small", Owner = "admin", CreatedAt = DateTime.UtcNow, TotalSize = 100L });
-        await _db.ExecuteAsync("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @TotalSize)",
-            new { Id = "size00002", Name = "big", Owner = "admin", CreatedAt = DateTime.UtcNow, TotalSize = 10000L });
-        await _db.ExecuteAsync("INSERT INTO Buckets (Id, Name, Owner, CreatedAt, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @TotalSize)",
-            new { Id = "size00003", Name = "medium", Owner = "admin", CreatedAt = DateTime.UtcNow, TotalSize = 1000L });
+        await Db.ExecuteAsync(_db, "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @TotalSize)",
+            p => { p.AddWithValue("@Id", "size00001"); p.AddWithValue("@Name", "small"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@TotalSize", 100L); });
+        await Db.ExecuteAsync(_db, "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @TotalSize)",
+            p => { p.AddWithValue("@Id", "size00002"); p.AddWithValue("@Name", "big"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@TotalSize", 10000L); });
+        await Db.ExecuteAsync(_db, "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @TotalSize)",
+            p => { p.AddWithValue("@Id", "size00003"); p.AddWithValue("@Name", "medium"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@TotalSize", 1000L); });
 
         var auth = AuthContext.Admin();
         var result = await _sut.ListAsync(
@@ -298,12 +329,12 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task GetByIdAsync_ExistingBucket_ReturnsBucketWithFiles()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @FileCount, @TotalSize)",
-            new { Id = "get0000001", Name = "get-test", Owner = "admin", CreatedAt = DateTime.UtcNow, FileCount = 1, TotalSize = 512L });
-        await _db.ExecuteAsync(
+            p => { p.AddWithValue("@Id", "get0000001"); p.AddWithValue("@Name", "get-test"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@FileCount", 1); p.AddWithValue("@TotalSize", 512L); });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
-            new { BucketId = "get0000001", Path = "hello.txt", Name = "hello.txt", Size = 512L, MimeType = "text/plain", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@BucketId", "get0000001"); p.AddWithValue("@Path", "hello.txt"); p.AddWithValue("@Name", "hello.txt"); p.AddWithValue("@Size", 512L); p.AddWithValue("@MimeType", "text/plain"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
 
         var result = await _sut.GetByIdAsync("get0000001");
 
@@ -325,9 +356,16 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task GetByIdAsync_ExpiredBucket_ReturnsNull()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "expired010", Name = "expired-get", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
+            p =>
+            {
+                p.AddWithValue("@Id", "expired010");
+                p.AddWithValue("@Name", "expired-get");
+                p.AddWithValue("@Owner", "admin");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10));
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1));
+            });
 
         var result = await _sut.GetByIdAsync("expired010");
         result.Should().BeNull();
@@ -336,14 +374,14 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task GetByIdAsync_LimitsTo100Files()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, FileCount) VALUES (@Id, @Name, @Owner, @CreatedAt, @FileCount)",
-            new { Id = "many000001", Name = "many-files", Owner = "admin", CreatedAt = DateTime.UtcNow, FileCount = 105 });
+            p => { p.AddWithValue("@Id", "many000001"); p.AddWithValue("@Name", "many-files"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@FileCount", 105); });
         for (int i = 0; i < 105; i++)
         {
-            await _db.ExecuteAsync(
+            await Db.ExecuteAsync(_db,
                 "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
-                new { BucketId = "many000001", Path = $"file{i:D4}.txt", Name = $"file{i:D4}.txt", Size = 100L, MimeType = "text/plain", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+                p => { p.AddWithValue("@BucketId", "many000001"); p.AddWithValue("@Path", $"file{i:D4}.txt"); p.AddWithValue("@Name", $"file{i:D4}.txt"); p.AddWithValue("@Size", 100L); p.AddWithValue("@MimeType", "text/plain"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
         }
 
         var result = await _sut.GetByIdAsync("many000001");
@@ -358,9 +396,9 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task UpdateAsync_UpdatesName()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
-            new { Id = "upd0000001", Name = "original", Owner = "admin", CreatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@Id", "upd0000001"); p.AddWithValue("@Name", "original"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         var auth = AuthContext.Admin();
         var result = await _sut.UpdateAsync("upd0000001",
@@ -373,9 +411,9 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task UpdateAsync_UpdatesDescription()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
-            new { Id = "upd0000002", Name = "desc-test", Owner = "admin", CreatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@Id", "upd0000002"); p.AddWithValue("@Name", "desc-test"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         var auth = AuthContext.Admin();
         var result = await _sut.UpdateAsync("upd0000002",
@@ -388,9 +426,9 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task UpdateAsync_UpdatesExpiry()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "upd0000003", Name = "exp-test", Owner = "admin", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(1) });
+            p => { p.AddWithValue("@Id", "upd0000003"); p.AddWithValue("@Name", "exp-test"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(1)); });
 
         var auth = AuthContext.Admin();
         var result = await _sut.UpdateAsync("upd0000003",
@@ -413,9 +451,9 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task UpdateAsync_NonOwner_ReturnsNull()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
-            new { Id = "upd0000004", Name = "not-yours", Owner = "alice", CreatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@Id", "upd0000004"); p.AddWithValue("@Name", "not-yours"); p.AddWithValue("@Owner", "alice"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         var auth = AuthContext.Owner("bob", "cf4_bob12345");
         var result = await _sut.UpdateAsync("upd0000004",
@@ -427,9 +465,9 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task UpdateAsync_OwnerCanUpdate()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
-            new { Id = "upd0000005", Name = "mine", Owner = "alice", CreatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@Id", "upd0000005"); p.AddWithValue("@Name", "mine"); p.AddWithValue("@Owner", "alice"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         var auth = AuthContext.Owner("alice", "cf4_alice123");
         var result = await _sut.UpdateAsync("upd0000005",
@@ -444,18 +482,18 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task DeleteAsync_ExistingBucket_DeletesAllRelated()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
-            new { Id = "del0000001", Name = "to-delete", Owner = "admin", CreatedAt = DateTime.UtcNow });
-        await _db.ExecuteAsync(
+            p => { p.AddWithValue("@Id", "del0000001"); p.AddWithValue("@Name", "to-delete"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
-            new { BucketId = "del0000001", Path = "file.txt", Name = "file.txt", Size = 100L, MimeType = "text/plain", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
-        await _db.ExecuteAsync(
+            p => { p.AddWithValue("@BucketId", "del0000001"); p.AddWithValue("@Path", "file.txt"); p.AddWithValue("@Name", "file.txt"); p.AddWithValue("@Size", 100L); p.AddWithValue("@MimeType", "text/plain"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO ShortUrls (Code, BucketId, FilePath, CreatedAt) VALUES (@Code, @BucketId, @FilePath, @CreatedAt)",
-            new { Code = "abc123", BucketId = "del0000001", FilePath = "file.txt", CreatedAt = DateTime.UtcNow });
-        await _db.ExecuteAsync(
+            p => { p.AddWithValue("@Code", "abc123"); p.AddWithValue("@BucketId", "del0000001"); p.AddWithValue("@FilePath", "file.txt"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO UploadTokens (Token, BucketId, ExpiresAt, CreatedAt) VALUES (@Token, @BucketId, @ExpiresAt, @CreatedAt)",
-            new { Token = "cfu_testtoken1234567890123456789012345678901234", BucketId = "del0000001", ExpiresAt = DateTime.UtcNow.AddDays(1), CreatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@Token", "cfu_testtoken1234567890123456789012345678901234"); p.AddWithValue("@BucketId", "del0000001"); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(1)); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         // Create the bucket directory
         Directory.CreateDirectory(Path.Combine(_tempDir, "del0000001"));
@@ -465,10 +503,10 @@ public class BucketServiceTests : IDisposable
 
         result.Should().BeTrue();
 
-        (await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'del0000001'")).Should().Be(0);
-        (await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Files WHERE BucketId = 'del0000001'")).Should().Be(0);
-        (await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM ShortUrls WHERE BucketId = 'del0000001'")).Should().Be(0);
-        (await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM UploadTokens WHERE BucketId = 'del0000001'")).Should().Be(0);
+        (await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM Buckets WHERE Id = 'del0000001'")).Should().Be(0);
+        (await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM Files WHERE BucketId = 'del0000001'")).Should().Be(0);
+        (await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM ShortUrls WHERE BucketId = 'del0000001'")).Should().Be(0);
+        (await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM UploadTokens WHERE BucketId = 'del0000001'")).Should().Be(0);
         Directory.Exists(Path.Combine(_tempDir, "del0000001")).Should().BeFalse();
     }
 
@@ -484,30 +522,30 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task DeleteAsync_NonOwner_ReturnsFalse()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
-            new { Id = "del0000002", Name = "not-yours", Owner = "alice", CreatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@Id", "del0000002"); p.AddWithValue("@Name", "not-yours"); p.AddWithValue("@Owner", "alice"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         var auth = AuthContext.Owner("bob", "cf4_bob12345");
         var result = await _sut.DeleteAsync("del0000002", auth);
 
         result.Should().BeFalse();
         // Bucket should still exist
-        (await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'del0000002'")).Should().Be(1);
+        (await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM Buckets WHERE Id = 'del0000002'")).Should().Be(1);
     }
 
     [Fact]
     public async Task DeleteAsync_OwnerCanDelete()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
-            new { Id = "del0000003", Name = "mine-delete", Owner = "alice", CreatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@Id", "del0000003"); p.AddWithValue("@Name", "mine-delete"); p.AddWithValue("@Owner", "alice"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
 
         var auth = AuthContext.Owner("alice", "cf4_alice123");
         var result = await _sut.DeleteAsync("del0000003", auth);
 
         result.Should().BeTrue();
-        (await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Buckets WHERE Id = 'del0000003'")).Should().Be(0);
+        (await Db.ExecuteScalarAsync<int>(_db, "SELECT COUNT(*) FROM Buckets WHERE Id = 'del0000003'")).Should().Be(0);
     }
 
     // ── GetSummaryAsync ─────────────────────────────────────────────────
@@ -515,15 +553,15 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task GetSummaryAsync_ReturnsSummaryText()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt, @FileCount, @TotalSize)",
-            new { Id = "sum0000001", Name = "summary-test", Owner = "admin", CreatedAt = new DateTime(2025, 1, 15, 0, 0, 0, DateTimeKind.Utc), ExpiresAt = DateTime.UtcNow.AddDays(30), FileCount = 2, TotalSize = 1536L });
-        await _db.ExecuteAsync(
+            p => { p.AddWithValue("@Id", "sum0000001"); p.AddWithValue("@Name", "summary-test"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", new DateTime(2025, 1, 15, 0, 0, 0, DateTimeKind.Utc)); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(30)); p.AddWithValue("@FileCount", 2); p.AddWithValue("@TotalSize", 1536L); });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
-            new { BucketId = "sum0000001", Path = "doc.pdf", Name = "doc.pdf", Size = 1024L, MimeType = "application/pdf", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
-        await _db.ExecuteAsync(
+            p => { p.AddWithValue("@BucketId", "sum0000001"); p.AddWithValue("@Path", "doc.pdf"); p.AddWithValue("@Name", "doc.pdf"); p.AddWithValue("@Size", 1024L); p.AddWithValue("@MimeType", "application/pdf"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Files (BucketId, Path, Name, Size, MimeType, CreatedAt, UpdatedAt) VALUES (@BucketId, @Path, @Name, @Size, @MimeType, @CreatedAt, @UpdatedAt)",
-            new { BucketId = "sum0000001", Path = "img.png", Name = "img.png", Size = 512L, MimeType = "image/png", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow });
+            p => { p.AddWithValue("@BucketId", "sum0000001"); p.AddWithValue("@Path", "img.png"); p.AddWithValue("@Name", "img.png"); p.AddWithValue("@Size", 512L); p.AddWithValue("@MimeType", "image/png"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@UpdatedAt", DateTime.UtcNow); });
 
         var result = await _sut.GetSummaryAsync("sum0000001");
 
@@ -540,9 +578,9 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task GetSummaryAsync_NeverExpiry_ShowsNever()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @CreatedAt, @FileCount, @TotalSize)",
-            new { Id = "sum0000002", Name = "no-expire-summary", Owner = "admin", CreatedAt = DateTime.UtcNow, FileCount = 0, TotalSize = 0L });
+            p => { p.AddWithValue("@Id", "sum0000002"); p.AddWithValue("@Name", "no-expire-summary"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@FileCount", 0); p.AddWithValue("@TotalSize", 0L); });
 
         var result = await _sut.GetSummaryAsync("sum0000002");
 
@@ -559,9 +597,16 @@ public class BucketServiceTests : IDisposable
     [Fact]
     public async Task GetSummaryAsync_ExpiredBucket_ReturnsNull()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @CreatedAt, @ExpiresAt)",
-            new { Id = "sum0000003", Name = "expired-summary", Owner = "admin", CreatedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddDays(-1) });
+            p =>
+            {
+                p.AddWithValue("@Id", "sum0000003");
+                p.AddWithValue("@Name", "expired-summary");
+                p.AddWithValue("@Owner", "admin");
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow.AddDays(-10));
+                p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(-1));
+            });
 
         var result = await _sut.GetSummaryAsync("sum0000003");
         result.Should().BeNull();
@@ -571,14 +616,14 @@ public class BucketServiceTests : IDisposable
 
     private async Task SeedBucketsAsync()
     {
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, OwnerKeyPrefix, CreatedAt, ExpiresAt, TotalSize) VALUES (@Id, @Name, @Owner, @OwnerKeyPrefix, @CreatedAt, @ExpiresAt, @TotalSize)",
-            new { Id = "seed000001", Name = "alpha", Owner = "alice", OwnerKeyPrefix = "cf4_alice123", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7), TotalSize = 100L });
-        await _db.ExecuteAsync(
+            p => { p.AddWithValue("@Id", "seed000001"); p.AddWithValue("@Name", "alpha"); p.AddWithValue("@Owner", "alice"); p.AddWithValue("@OwnerKeyPrefix", "cf4_alice123"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7)); p.AddWithValue("@TotalSize", 100L); });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, OwnerKeyPrefix, CreatedAt, ExpiresAt, TotalSize) VALUES (@Id, @Name, @Owner, @OwnerKeyPrefix, @CreatedAt, @ExpiresAt, @TotalSize)",
-            new { Id = "seed000002", Name = "bravo", Owner = "alice", OwnerKeyPrefix = "cf4_alice123", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7), TotalSize = 200L });
-        await _db.ExecuteAsync(
+            p => { p.AddWithValue("@Id", "seed000002"); p.AddWithValue("@Name", "bravo"); p.AddWithValue("@Owner", "alice"); p.AddWithValue("@OwnerKeyPrefix", "cf4_alice123"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7)); p.AddWithValue("@TotalSize", 200L); });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, OwnerKeyPrefix, CreatedAt, ExpiresAt, TotalSize) VALUES (@Id, @Name, @Owner, @OwnerKeyPrefix, @CreatedAt, @ExpiresAt, @TotalSize)",
-            new { Id = "seed000003", Name = "charlie", Owner = "bob", OwnerKeyPrefix = "cf4_bob12345", CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddDays(7), TotalSize = 300L });
+            p => { p.AddWithValue("@Id", "seed000003"); p.AddWithValue("@Name", "charlie"); p.AddWithValue("@Owner", "bob"); p.AddWithValue("@OwnerKeyPrefix", "cf4_bob12345"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); p.AddWithValue("@ExpiresAt", DateTime.UtcNow.AddDays(7)); p.AddWithValue("@TotalSize", 300L); });
     }
 }

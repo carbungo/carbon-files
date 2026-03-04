@@ -4,7 +4,6 @@ using CarbonFiles.Core.Models;
 using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
 using CarbonFiles.Infrastructure.Services;
-using Dapper;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,7 +20,7 @@ public class ApiKeyServiceTests : IDisposable
     {
         _db = new SqliteConnection("Data Source=:memory:");
         _db.Open();
-        _db.Execute(DatabaseInitializer.Schema);
+        DatabaseInitializer.Initialize(_db);
 
         _sut = new ApiKeyService(_db, NullLogger<ApiKeyService>.Instance);
     }
@@ -55,8 +54,10 @@ public class ApiKeyServiceTests : IDisposable
         var secret = result.Key[(result.Prefix.Length + 1)..];
 
         // Verify the stored entity has hashed secret, not plaintext
-        var entity = await _db.QueryFirstOrDefaultAsync<ApiKeyEntity>(
-            "SELECT * FROM ApiKeys WHERE Prefix = @Prefix", new { result.Prefix });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM ApiKeys WHERE Prefix = @Prefix",
+            p => p.AddWithValue("@Prefix", result.Prefix),
+            ApiKeyEntity.Read);
         entity.Should().NotBeNull();
         entity!.HashedSecret.Should().NotBe(secret);
 
@@ -71,8 +72,10 @@ public class ApiKeyServiceTests : IDisposable
     {
         var result = await _sut.CreateAsync("stored-test");
 
-        var entity = await _db.QueryFirstOrDefaultAsync<ApiKeyEntity>(
-            "SELECT * FROM ApiKeys WHERE Prefix = @Prefix", new { result.Prefix });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM ApiKeys WHERE Prefix = @Prefix",
+            p => p.AddWithValue("@Prefix", result.Prefix),
+            ApiKeyEntity.Read);
         entity.Should().NotBeNull();
         entity!.Name.Should().Be("stored-test");
         entity.Prefix.Should().Be(result.Prefix);
@@ -138,8 +141,10 @@ public class ApiKeyServiceTests : IDisposable
         var deleted = await _sut.DeleteAsync(created.Prefix);
 
         deleted.Should().BeTrue();
-        var entity = await _db.QueryFirstOrDefaultAsync<ApiKeyEntity>(
-            "SELECT * FROM ApiKeys WHERE Prefix = @Prefix", new { created.Prefix });
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM ApiKeys WHERE Prefix = @Prefix",
+            p => p.AddWithValue("@Prefix", created.Prefix),
+            ApiKeyEntity.Read);
         entity.Should().BeNull();
     }
 
@@ -203,12 +208,30 @@ public class ApiKeyServiceTests : IDisposable
         var created = await _sut.CreateAsync("stats-test");
 
         // Seed some buckets associated with this key
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, OwnerKeyPrefix, CreatedAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @OwnerKeyPrefix, @CreatedAt, @FileCount, @TotalSize)",
-            new { Id = "bkt001", Name = "bucket-1", Owner = "stats-test", OwnerKeyPrefix = created.Prefix, CreatedAt = DateTime.UtcNow, FileCount = 5, TotalSize = 1024L });
-        await _db.ExecuteAsync(
+            p =>
+            {
+                p.AddWithValue("@Id", "bkt001");
+                p.AddWithValue("@Name", "bucket-1");
+                p.AddWithValue("@Owner", "stats-test");
+                p.AddWithValue("@OwnerKeyPrefix", created.Prefix);
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                p.AddWithValue("@FileCount", 5);
+                p.AddWithValue("@TotalSize", 1024L);
+            });
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, OwnerKeyPrefix, CreatedAt, FileCount, TotalSize) VALUES (@Id, @Name, @Owner, @OwnerKeyPrefix, @CreatedAt, @FileCount, @TotalSize)",
-            new { Id = "bkt002", Name = "bucket-2", Owner = "stats-test", OwnerKeyPrefix = created.Prefix, CreatedAt = DateTime.UtcNow, FileCount = 3, TotalSize = 2048L });
+            p =>
+            {
+                p.AddWithValue("@Id", "bkt002");
+                p.AddWithValue("@Name", "bucket-2");
+                p.AddWithValue("@Owner", "stats-test");
+                p.AddWithValue("@OwnerKeyPrefix", created.Prefix);
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                p.AddWithValue("@FileCount", 3);
+                p.AddWithValue("@TotalSize", 2048L);
+            });
 
         var result = await _sut.ListAsync(new PaginationParams());
         var item = result.Items.First(i => i.Prefix == created.Prefix);
@@ -238,9 +261,19 @@ public class ApiKeyServiceTests : IDisposable
         var created = await _sut.CreateAsync("usage-test");
 
         // Add a bucket
-        await _db.ExecuteAsync(
+        await Db.ExecuteAsync(_db,
             "INSERT INTO Buckets (Id, Name, Owner, OwnerKeyPrefix, CreatedAt, FileCount, TotalSize, DownloadCount) VALUES (@Id, @Name, @Owner, @OwnerKeyPrefix, @CreatedAt, @FileCount, @TotalSize, @DownloadCount)",
-            new { Id = "ubkt01", Name = "usage-bucket", Owner = "usage-test", OwnerKeyPrefix = created.Prefix, CreatedAt = DateTime.UtcNow, FileCount = 10, TotalSize = 5000L, DownloadCount = 42L });
+            p =>
+            {
+                p.AddWithValue("@Id", "ubkt01");
+                p.AddWithValue("@Name", "usage-bucket");
+                p.AddWithValue("@Owner", "usage-test");
+                p.AddWithValue("@OwnerKeyPrefix", created.Prefix);
+                p.AddWithValue("@CreatedAt", DateTime.UtcNow);
+                p.AddWithValue("@FileCount", 10);
+                p.AddWithValue("@TotalSize", 5000L);
+                p.AddWithValue("@DownloadCount", 42L);
+            });
 
         var result = await _sut.GetUsageAsync(created.Prefix);
 
