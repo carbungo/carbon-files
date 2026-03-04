@@ -211,6 +211,70 @@ public class FileOperationsTests
     }
 
     [Fact]
+    public async Task UploadAsync_ByteArray_SendsContent()
+    {
+        var (client, handler) = CreateClient();
+        handler.Enqueue(HttpStatusCode.OK,
+            """{"uploaded":[{"path":"data.bin","name":"data.bin","size":4,"mime_type":"application/octet-stream","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}""");
+
+        var result = await client.Buckets["b1"].Files.UploadAsync(
+            new byte[] { 1, 2, 3, 4 }, "data.bin", ct: TestContext.Current.CancellationToken);
+
+        result.Uploaded.Should().HaveCount(1);
+        handler.Requests[0].Method.Should().Be(HttpMethod.Put);
+        handler.Requests[0].RequestUri!.Query.Should().Contain("filename=data.bin");
+    }
+
+    [Fact]
+    public async Task UploadFileAsync_UsesFileNameFromPath()
+    {
+        var (client, handler) = CreateClient();
+        handler.Enqueue(HttpStatusCode.OK,
+            """{"uploaded":[{"path":"test.txt","name":"test.txt","size":5,"mime_type":"text/plain","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}""");
+
+        // Create a temp file to upload
+        var tempFile = Path.Combine(Path.GetTempPath(), $"cf_test_{Guid.NewGuid():N}.txt");
+        try
+        {
+            await File.WriteAllTextAsync(tempFile, "hello", TestContext.Current.CancellationToken);
+
+            var result = await client.Buckets["b1"].Files.UploadFileAsync(
+                tempFile, ct: TestContext.Current.CancellationToken);
+
+            result.Uploaded.Should().HaveCount(1);
+            handler.Requests[0].RequestUri!.Query.Should().Contain("filename=" + Path.GetFileName(tempFile));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public async Task UploadFileAsync_OverridesFilename()
+    {
+        var (client, handler) = CreateClient();
+        handler.Enqueue(HttpStatusCode.OK,
+            """{"uploaded":[{"path":"custom.txt","name":"custom.txt","size":5,"mime_type":"text/plain","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}""");
+
+        var tempFile = Path.Combine(Path.GetTempPath(), $"cf_test_{Guid.NewGuid():N}.txt");
+        try
+        {
+            await File.WriteAllTextAsync(tempFile, "hello", TestContext.Current.CancellationToken);
+
+            var result = await client.Buckets["b1"].Files.UploadFileAsync(
+                tempFile, filename: "custom.txt", ct: TestContext.Current.CancellationToken);
+
+            result.Uploaded.Should().HaveCount(1);
+            handler.Requests[0].RequestUri!.Query.Should().Contain("filename=custom.txt");
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public async Task PatchAsync_ThrowsCarbonFilesException_OnError()
     {
         var (client, handler) = CreateClient();

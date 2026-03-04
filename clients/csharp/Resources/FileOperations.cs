@@ -70,4 +70,35 @@ public class FileOperations
         streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         return _transport.PutStreamAsync<UploadResponse>(url, streamContent, ct);
     }
+
+    /// <summary>
+    /// Upload a file from a local file path. The filename is derived from the path unless overridden.
+    /// </summary>
+    public async Task<UploadResponse> UploadFileAsync(
+        string filePath,
+        string? filename = null,
+        IProgress<UploadProgress>? progress = null,
+        string? uploadToken = null,
+        CancellationToken ct = default)
+    {
+#if !NETSTANDARD2_0
+        await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+#else
+        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+#endif
+        return await UploadAsync(stream, filename ?? Path.GetFileName(filePath), progress, uploadToken, ct);
+    }
+
+    /// <summary>
+    /// Upload from a byte array.
+    /// </summary>
+    public Task<UploadResponse> UploadAsync(
+        byte[] content,
+        string filename,
+        IProgress<UploadProgress>? progress = null,
+        string? uploadToken = null,
+        CancellationToken ct = default)
+    {
+        return UploadAsync(new MemoryStream(content), filename, progress, uploadToken, ct);
+    }
 }
