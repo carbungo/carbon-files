@@ -26,7 +26,7 @@ public sealed class UploadService : IUploadService
         _logger = logger;
     }
 
-    public async Task<BucketFile> StoreFileAsync(string bucketId, string path, Stream content, AuthContext auth)
+    public async Task<BucketFile> StoreFileAsync(string bucketId, string path, Stream content, AuthContext auth, long maxSize = 0, CancellationToken ct = default)
     {
         _logger.LogDebug("Storing file {Path} in bucket {BucketId}", path, bucketId);
 
@@ -34,8 +34,8 @@ public sealed class UploadService : IUploadService
         var name = Path.GetFileName(path);
         var mimeType = MimeDetector.DetectFromExtension(path);
 
-        // Stream content to disk
-        var size = await _storage.StoreAsync(bucketId, normalized, content);
+        // Stream content to disk (pipelined: network reads and disk writes run concurrently)
+        var size = await _storage.StoreAsync(bucketId, normalized, content, maxSize, ct);
 
         // Check if file already exists
         var existing = await Db.QueryFirstOrDefaultAsync(_db,

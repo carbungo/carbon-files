@@ -1,4 +1,6 @@
+using System.IO.Pipelines;
 using CarbonFiles.Core.Configuration;
+using CarbonFiles.Core.Exceptions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -21,25 +23,118 @@ public sealed class FileStorageService
         return Path.Combine(_dataDir, bucketId, encoded);
     }
 
-    public async Task<long> StoreAsync(string bucketId, string filePath, Stream content)
+    /// <summary>
+    /// Stores a file using System.IO.Pipelines so network reads and disk writes
+    /// run concurrently. The pipe provides backpressure — if disk is slow, network
+    /// reads pause automatically via the pause/resume thresholds.
+    /// </summary>
+    public async Task<long> StoreAsync(string bucketId, string filePath, Stream content, long maxSize = 0, CancellationToken ct = default)
     {
         var targetPath = GetFilePath(bucketId, filePath);
         var dir = Path.GetDirectoryName(targetPath)!;
         Directory.CreateDirectory(dir);
 
-        // Atomic write: temp file + rename
         var tempPath = $"{targetPath}.tmp.{Guid.NewGuid():N}";
-        long size;
-        await using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920))
+
+        var pipe = new Pipe(new PipeOptions(
+            pauseWriterThreshold: 1024 * 1024,    // Pause network reads when 1MB buffered
+            resumeWriterThreshold: 512 * 1024,     // Resume when buffer drops to 512KB
+            minimumSegmentSize: 128 * 1024,        // 128KB segments
+            useSynchronizationContext: false));
+
+        var fillTask = FillPipeFromStreamAsync(pipe.Writer, content, maxSize, ct);
+        var drainTask = DrainPipeToFileAsync(pipe.Reader, tempPath, ct);
+
+        long totalBytes;
+        try
         {
-            await content.CopyToAsync(fs);
-            size = fs.Length;
+            await Task.WhenAll(fillTask, drainTask);
+            totalBytes = fillTask.Result;
         }
+        catch
+        {
+            try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+            // Surface the root-cause exception from the fill task (e.g. FileTooLargeException)
+            if (fillTask.IsFaulted)
+                throw fillTask.Exception!.InnerException!;
+            throw;
+        }
+
         File.Move(tempPath, targetPath, overwrite: true);
+        _logger.LogDebug("Stored {Size} bytes to {Path}", totalBytes, targetPath);
+        return totalBytes;
+    }
 
-        _logger.LogDebug("Stored {Size} bytes to {Path}", size, targetPath);
+    /// <summary>
+    /// Network → Pipe: reads from the source stream into the pipe writer.
+    /// Returns total bytes read. Throws FileTooLargeException if maxSize exceeded.
+    /// </summary>
+    private static async Task<long> FillPipeFromStreamAsync(PipeWriter writer, Stream source, long maxSize, CancellationToken ct)
+    {
+        const int MinimumReadSize = 128 * 1024; // 128KB read chunks
+        long totalBytes = 0;
 
-        return size;
+        try
+        {
+            while (true)
+            {
+                var memory = writer.GetMemory(MinimumReadSize);
+                var bytesRead = await source.ReadAsync(memory, ct);
+                if (bytesRead == 0)
+                    break;
+
+                totalBytes += bytesRead;
+                if (maxSize > 0 && totalBytes > maxSize)
+                    throw new FileTooLargeException(maxSize);
+
+                writer.Advance(bytesRead);
+
+                var flush = await writer.FlushAsync(ct);
+                if (flush.IsCompleted)
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            await writer.CompleteAsync(ex);
+            throw;
+        }
+
+        await writer.CompleteAsync();
+        return totalBytes;
+    }
+
+    /// <summary>
+    /// Pipe → Disk: drains the pipe reader into a file.
+    /// </summary>
+    private static async Task DrainPipeToFileAsync(PipeReader reader, string filePath, CancellationToken ct)
+    {
+        await using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None,
+            bufferSize: 4096, useAsync: true);
+
+        try
+        {
+            while (true)
+            {
+                var result = await reader.ReadAsync(ct);
+                var buffer = result.Buffer;
+
+                foreach (var segment in buffer)
+                    await fs.WriteAsync(segment, ct);
+
+                reader.AdvanceTo(buffer.End);
+
+                if (result.IsCompleted)
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            await reader.CompleteAsync(ex);
+            throw;
+        }
+
+        await reader.CompleteAsync();
     }
 
     public FileStream? OpenRead(string bucketId, string filePath)

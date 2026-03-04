@@ -1,10 +1,13 @@
 using CarbonFiles.Api.Auth;
 using CarbonFiles.Api.Serialization;
 using CarbonFiles.Core.Configuration;
+using CarbonFiles.Core.Exceptions;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Responses;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 
 namespace CarbonFiles.Api.Endpoints;
 
@@ -15,7 +18,7 @@ public static class UploadEndpoints
 
     public static void MapUploadEndpoints(this IEndpointRouteBuilder app)
     {
-        // POST /api/buckets/{id}/upload — Multipart upload
+        // POST /api/buckets/{id}/upload — Multipart upload (pipelined I/O)
         app.MapPost("/api/buckets/{id}/upload", async (string id, HttpContext ctx,
             IUploadService uploadService, IBucketService bucketService,
             IUploadTokenService uploadTokenService, IOptions<CarbonFilesOptions> options, ILoggerFactory loggerFactory) =>
@@ -45,28 +48,53 @@ public static class UploadEndpoints
                 auth = AuthContext.Admin();
             }
 
-            if (!ctx.Request.HasFormContentType)
+            // Parse multipart boundary from Content-Type
+            if (!MediaTypeHeaderValue.TryParse(ctx.Request.ContentType, out var mediaType) ||
+                !mediaType.MediaType.Equals("multipart/form-data", StringComparison.OrdinalIgnoreCase))
                 return Results.Json(new ErrorResponse { Error = "Expected multipart/form-data" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
 
-            var form = await ctx.Request.ReadFormAsync();
+            var boundary = HeaderUtilities.RemoveQuotes(mediaType.Boundary).Value;
+            if (string.IsNullOrEmpty(boundary))
+                return Results.Json(new ErrorResponse { Error = "Missing multipart boundary" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
+
+            // Stream sections directly from the request body — no buffering
+            var reader = new MultipartReader(boundary, ctx.Request.Body);
             var uploaded = new List<BucketFile>();
             var maxUploadSize = options.Value.MaxUploadSize;
 
-            foreach (var file in form.Files)
+            MultipartSection? section;
+            while ((section = await reader.ReadNextSectionAsync(ctx.RequestAborted)) != null)
             {
-                // Determine path
-                var path = GenericNames.Contains(file.Name) ? file.FileName : file.Name;
+                if (!ContentDispositionHeaderValue.TryParse(section.ContentDisposition, out var contentDisposition))
+                    continue;
+
+                // Skip non-file fields
+                if (!contentDisposition.FileName.HasValue && !contentDisposition.FileNameStar.HasValue)
+                    continue;
+
+                var fieldName = contentDisposition.Name.HasValue
+                    ? HeaderUtilities.RemoveQuotes(contentDisposition.Name).Value
+                    : null;
+                var fileName = contentDisposition.FileName.HasValue
+                    ? HeaderUtilities.RemoveQuotes(contentDisposition.FileName).Value
+                    : contentDisposition.FileNameStar.Value;
+
+                // Determine path: custom field name takes precedence unless it's a generic name
+                var path = GenericNames.Contains(fieldName ?? "") ? fileName : fieldName;
 
                 if (string.IsNullOrWhiteSpace(path))
                     return Results.Json(new ErrorResponse { Error = "File path could not be determined" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
 
-                // Check max upload size
-                if (maxUploadSize > 0 && file.Length > maxUploadSize)
+                try
+                {
+                    // Pipelined: network reads and disk writes run concurrently via System.IO.Pipelines
+                    var result = await uploadService.StoreFileAsync(id, path, section.Body, auth, maxUploadSize, ctx.RequestAborted);
+                    uploaded.Add(result);
+                }
+                catch (FileTooLargeException)
+                {
                     return Results.Json(new ErrorResponse { Error = "File too large" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 413);
-
-                await using var stream = file.OpenReadStream();
-                var result = await uploadService.StoreFileAsync(id, path, stream, auth);
-                uploaded.Add(result);
+                }
             }
 
             // Update upload token usage if applicable
@@ -88,10 +116,10 @@ public static class UploadEndpoints
         .WithSummary("Upload files (multipart)")
         .WithDescription("Auth: Bucket owner, admin, or upload token (?token=). Upload one or more files via multipart/form-data. Field names become file paths unless generic (file, files, upload, etc.).");
 
-        // PUT /api/buckets/{id}/upload/stream — Stream upload (single file)
+        // PUT /api/buckets/{id}/upload/stream — Stream upload (single file, pipelined I/O)
         app.MapPut("/api/buckets/{id}/upload/stream", async (string id, HttpContext ctx,
             IUploadService uploadService, IBucketService bucketService,
-            IUploadTokenService uploadTokenService, ILoggerFactory loggerFactory) =>
+            IUploadTokenService uploadTokenService, IOptions<CarbonFilesOptions> options, ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("CarbonFiles.Api.Endpoints.UploadEndpoints");
             // Check bucket exists
@@ -121,7 +149,18 @@ public static class UploadEndpoints
             if (string.IsNullOrEmpty(filename))
                 return Results.Json(new ErrorResponse { Error = "filename query parameter is required" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 400);
 
-            var result = await uploadService.StoreFileAsync(id, filename, ctx.Request.Body, auth);
+            var maxUploadSize = options.Value.MaxUploadSize;
+
+            BucketFile result;
+            try
+            {
+                result = await uploadService.StoreFileAsync(id, filename, ctx.Request.Body, auth, maxUploadSize, ctx.RequestAborted);
+            }
+            catch (FileTooLargeException)
+            {
+                return Results.Json(new ErrorResponse { Error = "File too large" }, CarbonFilesJsonContext.Default.ErrorResponse, statusCode: 413);
+            }
+
             logger.LogInformation("Stream uploaded {FileName} to bucket {BucketId}", filename, id);
 
             // Update upload token usage if applicable
@@ -136,6 +175,7 @@ public static class UploadEndpoints
         .Produces<ErrorResponse>(400)
         .Produces<ErrorResponse>(403)
         .Produces<ErrorResponse>(404)
+        .Produces<ErrorResponse>(413)
         .WithTags("Uploads")
         .WithSummary("Upload file (streaming)")
         .WithDescription("Auth: Bucket owner, admin, or upload token (?token=). Stream-upload a single file. Requires ?filename= query parameter.");
