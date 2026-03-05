@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 namespace CarbonFiles.Infrastructure.Data;
 
@@ -86,16 +87,53 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS "IX_UploadTokens_BucketId" ON "UploadTokens" ("BucketId");
         """;
 
-    public static void Initialize(IDbConnection db)
+    public static void Initialize(IDbConnection db, ILogger? logger = null)
     {
         var sqlite = (SqliteConnection)db;
 
+        // WAL mode + resilience PRAGMAs
         using var pragmaCmd = sqlite.CreateCommand();
-        pragmaCmd.CommandText = "PRAGMA journal_mode=WAL;";
+        pragmaCmd.CommandText = """
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=NORMAL;
+            PRAGMA wal_autocheckpoint=1000;
+            """;
         pragmaCmd.ExecuteNonQuery();
 
+        // Schema
         using var schemaCmd = sqlite.CreateCommand();
         schemaCmd.CommandText = Schema;
         schemaCmd.ExecuteNonQuery();
+
+        // Integrity check
+        RunIntegrityCheck(sqlite, logger);
+    }
+
+    internal static bool RunIntegrityCheck(SqliteConnection sqlite, ILogger? logger)
+    {
+        using var checkCmd = sqlite.CreateCommand();
+        checkCmd.CommandText = "PRAGMA quick_check;";
+        var result = checkCmd.ExecuteScalar()?.ToString();
+
+        if (result == "ok")
+        {
+            logger?.LogInformation("Database integrity check passed");
+            return true;
+        }
+
+        logger?.LogWarning("Database integrity check failed: {Result}. Attempting REINDEX", result);
+        try
+        {
+            using var reindexCmd = sqlite.CreateCommand();
+            reindexCmd.CommandText = "REINDEX;";
+            reindexCmd.ExecuteNonQuery();
+            logger?.LogInformation("REINDEX completed successfully");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "REINDEX failed — database may have corruption. Manual intervention may be required");
+            return false;
+        }
     }
 }

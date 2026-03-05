@@ -168,12 +168,12 @@ var dbPath = builder.Configuration.GetValue<string>("CarbonFiles:DbPath") ?? "./
 Directory.CreateDirectory(dataDir);
 Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
 
-// Initialize database schema + WAL mode
-// Use raw SQL DDL — idempotent via CREATE TABLE IF NOT EXISTS.
+// Initialize database schema + WAL mode + integrity check
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<IDbConnection>();
-    DatabaseInitializer.Initialize(db);
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("DatabaseInitializer");
+    DatabaseInitializer.Initialize(db, logger);
 }
 
 // Middleware
