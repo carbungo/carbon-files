@@ -1,6 +1,6 @@
 # CarbonFiles.Client
 
-Handcrafted C# client for the [CarbonFiles](https://github.com/CarbonNeuron/carbon-files) file-sharing API. Wraps `HttpClient` with a fluent, resource-scoped API featuring upload progress callbacks, cancellation support, and real-time SignalR events.
+Handcrafted C# client for the [CarbonFiles](https://github.com/carbungo/carbon-files) file-sharing API. Wraps `HttpClient` with a fluent, resource-scoped API featuring upload progress callbacks, cancellation support, and real-time SignalR events.
 
 ## Installation
 
@@ -332,5 +332,5 @@ catch (CarbonFilesException ex)
 
 ## Links
 
-- [CarbonFiles repository](https://github.com/CarbonNeuron/carbon-files)
+- [CarbonFiles repository](https://github.com/carbungo/carbon-files)
 - [NuGet package](https://www.nuget.org/packages/CarbonFiles.Client)

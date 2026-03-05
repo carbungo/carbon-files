@@ -1,6 +1,6 @@
 # @carbonfiles/client
 
-Handcrafted TypeScript client for the [CarbonFiles](https://github.com/CarbonNeuron/carbon-files) file-sharing API. Zero runtime dependencies, works in Node.js 18+ and browsers.
+Handcrafted TypeScript client for the [CarbonFiles](https://github.com/carbungo/carbon-files) file-sharing API. Zero runtime dependencies, works in Node.js 18+ and browsers.
 
 ## Installation
 
@@ -215,5 +215,5 @@ console.log(token.token); // "cfu_..."
 
 ## Links
 
-- [CarbonFiles repository](https://github.com/CarbonNeuron/carbon-files)
+- [CarbonFiles repository](https://github.com/carbungo/carbon-files)
 - [npm package](https://www.npmjs.com/package/@carbonfiles/client)

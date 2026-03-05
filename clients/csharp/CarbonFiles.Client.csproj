@@ -12,7 +12,7 @@
     <Description>Handcrafted C# client for the CarbonFiles API</Description>
     <PackageTags>carbonfiles;api;client</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/CarbonNeuron/carbon-files</RepositoryUrl>
+    <RepositoryUrl>https://github.com/carbungo/carbon-files</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>
