@@ -20,16 +20,14 @@ public static class PathNormalizer
         if (string.IsNullOrEmpty(path))
             throw new ArgumentException("Path cannot be empty");
 
-        // Reject path traversal
-        if (path.Contains(".."))
-            throw new ArgumentException("Path traversal not allowed");
-
-        // Reject empty path components (e.g., "src/./file" after normalization still has ".")
+        // Reject path traversal and empty/dot-only components
         var components = path.Split('/');
         foreach (var component in components)
         {
             if (string.IsNullOrWhiteSpace(component) || component == ".")
                 throw new ArgumentException("Empty path component");
+            if (component == "..")
+                throw new ArgumentException("Path traversal not allowed");
         }
 
         return path;

@@ -11,6 +11,9 @@ public class PathNormalizerTests
     [InlineData("/readme.md", "readme.md")]
     [InlineData("src\\main.cs", "src/main.cs")]
     [InlineData("src//utils//file.cs", "src/utils/file.cs")]
+    [InlineData("COOKED....mp4", "COOKED....mp4")]
+    [InlineData("file...name.txt", "file...name.txt")]
+    [InlineData("dots..in..name.pdf", "dots..in..name.pdf")]
     [InlineData("src/main.cs/", "src/main.cs")]
     [InlineData("/src/main.cs", "src/main.cs")]
     public void Normalize_ValidPaths_ReturnsNormalized(string input, string expected)
