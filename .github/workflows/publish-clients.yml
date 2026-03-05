@@ -68,18 +68,10 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: openapi-spec
-          path: clients/typescript
-
       - name: Set version
         run: npm version "${{ needs.export-spec.outputs.version }}" --no-git-tag-version
 
       - run: npm ci
-
-      - name: Generate client
-        run: npm run generate
 
       - name: Build
         run: npm run build
