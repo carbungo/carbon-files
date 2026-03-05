@@ -5,16 +5,25 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from carbonfiles.models import (
+    ApiKeyListItem,
+    ApiKeyResponse,
+    ApiKeyUsageResponse,
     Bucket,
     BucketDetail,
     BucketFile,
+    DashboardTokenInfo,
+    DashboardTokenResponse,
     DirectoryEntry,
     DirectoryListingResponse,
     ErrorResponse,
     FileTreeResponse,
+    HealthResponse,
+    OwnerStats,
     PaginatedResponse,
+    StatsResponse,
     UploadedFile,
     UploadResponse,
+    UploadTokenResponse,
     VerifyResponse,
 )
 
@@ -298,3 +307,144 @@ class TestDirectoryListingResponse:
         assert model.total_folders == 2
         assert model.limit == 50
         assert model.offset == 0
+
+
+# ---------- keys.py ----------
+
+
+class TestApiKeyResponse:
+    def test_basic(self) -> None:
+        data = {
+            "key": "cf4_secret_key_value",
+            "prefix": "cf4_se",
+            "name": "my-key",
+            "created_at": NOW_STR,
+        }
+        model = ApiKeyResponse.model_validate(data)
+        assert model.key == "cf4_secret_key_value"
+        assert model.prefix == "cf4_se"
+        assert model.name == "my-key"
+
+
+class TestApiKeyListItem:
+    def test_with_last_used(self) -> None:
+        data = {
+            "prefix": "cf4_ab",
+            "name": "prod-key",
+            "created_at": NOW_STR,
+            "last_used_at": NOW_STR,
+            "bucket_count": 3,
+            "file_count": 50,
+            "total_size": 1_000_000,
+        }
+        model = ApiKeyListItem.model_validate(data)
+        assert model.prefix == "cf4_ab"
+        assert model.last_used_at is not None
+        assert model.bucket_count == 3
+
+    def test_without_last_used(self) -> None:
+        data = {
+            "prefix": "cf4_cd",
+            "name": "new-key",
+            "created_at": NOW_STR,
+            "bucket_count": 0,
+            "file_count": 0,
+            "total_size": 0,
+        }
+        model = ApiKeyListItem.model_validate(data)
+        assert model.last_used_at is None
+
+
+class TestApiKeyUsageResponse:
+    def test_with_buckets(self) -> None:
+        data = {
+            "prefix": "cf4_ab",
+            "name": "prod-key",
+            "created_at": NOW_STR,
+            "last_used_at": NOW_STR,
+            "bucket_count": 1,
+            "file_count": 10,
+            "total_size": 5000,
+            "total_downloads": 100,
+            "buckets": [_make_bucket_data()],
+        }
+        model = ApiKeyUsageResponse.model_validate(data)
+        assert model.total_downloads == 100
+        assert len(model.buckets) == 1
+        assert model.buckets[0].id == "bkt_abc123"
+
+
+# ---------- tokens.py ----------
+
+
+class TestUploadTokenResponse:
+    def test_with_max_uploads(self) -> None:
+        data = {
+            "token": "cfu_token_value",
+            "bucket_id": "bkt_abc123",
+            "expires_at": NOW_STR,
+            "max_uploads": 10,
+            "uploads_used": 3,
+        }
+        model = UploadTokenResponse.model_validate(data)
+        assert model.token == "cfu_token_value"
+        assert model.bucket_id == "bkt_abc123"
+        assert model.max_uploads == 10
+        assert model.uploads_used == 3
+
+    def test_without_max_uploads(self) -> None:
+        data = {
+            "token": "cfu_token_value",
+            "bucket_id": "bkt_abc123",
+            "expires_at": NOW_STR,
+            "uploads_used": 0,
+        }
+        model = UploadTokenResponse.model_validate(data)
+        assert model.max_uploads is None
+
+
+class TestDashboardTokenResponse:
+    def test_basic(self) -> None:
+        data = {"token": "jwt_token_here", "expires_at": NOW_STR}
+        model = DashboardTokenResponse.model_validate(data)
+        assert model.token == "jwt_token_here"
+
+
+class TestDashboardTokenInfo:
+    def test_basic(self) -> None:
+        data = {"scope": "admin", "expires_at": NOW_STR}
+        model = DashboardTokenInfo.model_validate(data)
+        assert model.scope == "admin"
+
+
+# ---------- stats.py ----------
+
+
+class TestStatsResponse:
+    def test_with_storage_by_owner(self) -> None:
+        data = {
+            "total_buckets": 5,
+            "total_files": 100,
+            "total_size": 500_000,
+            "total_keys": 3,
+            "total_downloads": 1000,
+            "storage_by_owner": [
+                {"owner": "user1", "bucket_count": 3, "file_count": 60, "total_size": 300_000},
+                {"owner": "user2", "bucket_count": 2, "file_count": 40, "total_size": 200_000},
+            ],
+        }
+        model = StatsResponse.model_validate(data)
+        assert model.total_buckets == 5
+        assert model.total_downloads == 1000
+        assert len(model.storage_by_owner) == 2
+        assert model.storage_by_owner[0].owner == "user1"
+        assert model.storage_by_owner[1].total_size == 200_000
+
+
+class TestHealthResponse:
+    def test_basic(self) -> None:
+        data = {"status": "healthy", "uptime_seconds": 3600, "db": "ok"}
+        model = HealthResponse.model_validate(data)
+        assert model.status == "healthy"
+        assert model.uptime_seconds == 3600
+        assert model.db == "ok"
