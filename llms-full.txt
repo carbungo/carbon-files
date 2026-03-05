@@ -445,7 +445,7 @@ Dashboard is a Next.js app (separate repo: carbungo/files-ui) that communicates 
 
 ### Auth Flow
 
-1. Admin creates a dashboard token via `POST /auth/dashboard-token`
+1. Admin creates a dashboard token via `POST /api/tokens/dashboard`
 2. User visits dashboard at `/?token={JWT}`
 3. Dashboard validates token via `/auth/set-token` API call
 4. On success, sets `cf-auth-token` cookie and redirects to `/dashboard`

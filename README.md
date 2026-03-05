@@ -1,8 +1,10 @@
 # ⚡ CarbonFiles
 
-A fast, lightweight file-sharing API with bucket-based organization, API key authentication, and real-time real-time SignalR events. Part of the [Carbungo](https://github.com/carbungo) platform.
+A fast, lightweight file-sharing API with bucket-based organization, API key authentication, and real-time SignalR events. Part of the [Carbungo](https://github.com/carbungo) platform.
 
 Built with ASP.NET Minimal API on .NET 10. Designed to be self-hosted, single-binary, and fast by default.
+
+Pair with the [CarbonFiles Dashboard](https://github.com/carbungo/files-ui) for a web UI, or use the [`cf` CLI](https://github.com/carbungo/carbon-files-cli) for command-line access.
 
 ## Quick Start
 
@@ -115,7 +117,7 @@ dotnet add package CarbonFiles.Client
 
 **Python:**
 ```bash
-pip install carbonfiles-client
+pip install carbonfiles
 ```
 
 **PowerShell:**
@@ -123,7 +125,13 @@ pip install carbonfiles-client
 Install-Module CarbonFiles
 ```
 
-📖 See each SDK's README for usage examples.
+See each SDK's README for usage examples: [TypeScript](clients/typescript/) | [C#](clients/csharp/) | [Python](clients/python/) | [PowerShell](clients/powershell/)
+
+## Documentation
+
+- [`llms.txt`](llms.txt) — LLM-consumable API reference (every endpoint, SDK examples, workflow recipes)
+- [`llms-full.txt`](llms-full.txt) — Extended codebase reference (schema, CAS internals, architecture)
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — Production deployment guide (Docker Compose, Traefik, TLS)
 
 ## Development
 

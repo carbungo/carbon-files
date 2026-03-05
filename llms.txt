@@ -1,0 +1,332 @@
+# CarbonFiles
+
+CarbonFiles is a file-sharing platform with bucket-based organization, multi-auth (admin key, API key, JWT, upload token), content-addressable storage, real-time SignalR events, and client SDKs for TypeScript, C#, Python, and PowerShell. Two components: API backend (this repo) and Dashboard frontend (separate repo).
+
+## Quick Start
+
+```
+Base URL: https://your-server.com (default port 8080)
+Auth:     Authorization: Bearer {your-key}
+First:    POST /api/buckets  {"name": "my-bucket"}
+Docs:     GET /scalar (interactive), GET /openapi/v1.json (spec)
+```
+
+## Authentication
+
+| Method | Format | Scope |
+|--------|--------|-------|
+| Admin key | `Authorization: Bearer {key}` | Full access. Set via `CarbonFiles__AdminKey` env var |
+| API key | `Authorization: Bearer cf4_{prefix}_{secret}` | Own buckets only |
+| Dashboard JWT | `Authorization: Bearer {jwt}` | Admin-level, stateless, max 24h |
+| Upload token | Query param `?token=cfu_{token}` | Single bucket, optional rate limit |
+
+## URL Conventions
+
+| Purpose | URL Pattern |
+|---------|-------------|
+| Human sharing (bucket) | `https://{dash-host}/buckets/{id}` |
+| Human sharing (file) | `https://{dash-host}/buckets/{id}/files/{path}` |
+| Direct download | `https://{api-host}/s/{code}` |
+| API calls | `https://{api-host}/api/...` |
+
+Never share raw `/api/` URLs with humans -- they return JSON. Dashboard and API may be on different subdomains.
+
+## Endpoints
+
+### Health
+
+`GET /healthz` -- Public
+```json
+{ "status": "string", "uptime_seconds": number, "db": "string" }
+```
+
+### Buckets
+
+`POST /api/buckets` -- Auth required -- 201
+```json
+// Request
+{ "name": "string (required)", "description?": "string", "expires_in?": "string" }
+// Response: Bucket
+{ "id", "name", "owner", "description", "created_at", "expires_at", "last_used_at", "file_count": int, "total_size": long }
+```
+
+`GET /api/buckets` -- Auth required -- Query: `limit, offset, sort, order, include_expired` (admin only)
+```json
+{ "items": [Bucket], "total": int, "limit": int, "offset": int }
+```
+
+`GET /api/buckets/{id}` -- Public -- Query: `include=files` for embedded file list
+```json
+{ ...Bucket, "unique_content_count": int, "unique_content_size": long, "files?": [BucketFile], "has_more_files?": bool }
+```
+
+`PATCH /api/buckets/{id}` -- Owner/Admin
+```json
+{ "name?": "string", "description?": "string", "expires_in?": "string" }
+```
+
+`DELETE /api/buckets/{id}` -- Owner/Admin -- 204
+
+`GET /api/buckets/{id}/summary` -- Public -- Returns `text/plain` bucket summary
+
+`GET /api/buckets/{id}/zip` -- Public -- Returns ZIP stream with `Content-Disposition: attachment`
+
+### Files
+
+`GET /api/buckets/{id}/files` -- Public
+Flat mode: Query `limit, offset, sort, order`
+```json
+{ "items": [BucketFile], "total": int, "limit": int, "offset": int }
+```
+Tree mode: Query `delimiter, prefix, cursor`
+```json
+{ "prefix", "delimiter", "directories": [{"path", "file_count", "total_size"}], "files": [BucketFile], "total_files": int, "total_directories": int, "cursor?": "string" }
+```
+
+`GET /api/buckets/{id}/ls` -- Public -- Query: `path, limit, offset, sort, order`
+```json
+{ "files": [BucketFile], "folders": ["string"], "total_files": int, "total_folders": int, "limit": int, "offset": int }
+```
+
+`GET /api/buckets/{id}/files/{path}` -- Public -- Returns BucketFile metadata
+
+BucketFile shape:
+```json
+{ "path", "name", "size": long, "mime_type", "sha256", "created_at", "updated_at", "short_url?", "short_code?" }
+```
+
+`GET /api/buckets/{id}/files/{path}/content` -- Public -- Raw file bytes
+Supports: `Range`, `ETag`, `If-None-Match`, `If-Modified-Since`, `?download=true`
+
+`GET /api/buckets/{id}/files/{path}/verify` -- Public
+```json
+{ "path": "string", "stored_hash": "string", "computed_hash": "string", "valid": bool }
+```
+
+`DELETE /api/buckets/{id}/files/{path}` -- Owner/Admin -- 204
+
+`PATCH /api/buckets/{id}/files/{path}/content` -- Owner/Admin/UploadToken
+Range write: `Content-Range: bytes {start}-{end}/{total}`. Append: `X-Append: true` header. Returns updated BucketFile.
+
+### Uploads
+
+`POST /api/buckets/{id}/upload` -- Owner/Admin/UploadToken -- `multipart/form-data` -- 201
+Field name = destination path (generic names like "file"/"files" use original filename).
+```json
+{ "uploaded": [{ ...BucketFile, "deduplicated": bool }] }
+```
+
+`PUT /api/buckets/{id}/upload/stream` -- Owner/Admin/UploadToken -- Query: `filename` (required) -- 201
+Raw body = file bytes.
+```json
+{ "uploaded": [{ ...BucketFile, "deduplicated": bool }] }
+```
+
+### Upload Tokens
+
+`POST /api/buckets/{id}/tokens` -- Owner/Admin -- 201
+```json
+// Request
+{ "expires_in?": "string", "max_uploads?": int }
+// Response
+{ "token": "string", "bucket_id": "string", "expires_at": "string", "max_uploads": int, "uploads_used": int }
+```
+
+### API Keys (Admin only)
+
+`POST /api/keys` -- 201 -- Full key returned ONCE
+```json
+// Request
+{ "name": "string" }
+// Response
+{ "key": "string", "prefix": "string", "name": "string", "created_at": "string" }
+```
+
+`GET /api/keys` -- Paginated
+```json
+{ "items": [{ "prefix", "name", "created_at", "last_used_at", "bucket_count": int, "file_count": int, "total_size": long }], "total", "limit", "offset" }
+```
+
+`DELETE /api/keys/{prefix}` -- 204
+
+`GET /api/keys/{prefix}/usage`
+```json
+{ "prefix", "name", "created_at", "last_used_at", "bucket_count", "file_count", "total_size", "total_downloads", "buckets": [Bucket] }
+```
+
+### Dashboard Tokens (Admin only)
+
+`POST /api/tokens/dashboard` -- 201 -- Default 1h, max 24h
+```json
+// Request
+{ "expires_in?": "string" }
+// Response
+{ "token": "string", "expires_at": "string" }
+```
+
+`GET /api/tokens/dashboard/me` -- Dashboard token auth
+```json
+{ "scope": "string", "expires_at": "string" }
+```
+
+### Stats (Admin only)
+
+`GET /api/stats`
+```json
+{ "total_buckets", "total_files", "total_size", "total_keys", "total_downloads", "storage_by_owner": [{ "owner", "bucket_count", "file_count", "total_size" }] }
+```
+
+### Short URLs
+
+`GET /s/{code}` -- Public -- 302 redirect to file content
+
+`DELETE /api/short/{code}` -- Owner/Admin -- 204
+
+### SignalR Hub
+
+Endpoint: `/hub/files` (JSON protocol only). Auth via `?access_token=` query param.
+
+Subscribe methods:
+- `SubscribeToBucket(bucketId)` / `UnsubscribeFromBucket(bucketId)`
+- `SubscribeToFile(bucketId, path)` / `UnsubscribeFromFile(bucketId, path)`
+- `SubscribeToAll()` (admin only) / `UnsubscribeFromAll()`
+
+Events:
+- `FileCreated(bucketId, BucketFile)`, `FileUpdated(bucketId, BucketFile)`, `FileDeleted(bucketId, path)`
+- `BucketCreated(Bucket)`, `BucketUpdated(bucketId, BucketChanges)`, `BucketDeleted(bucketId)`
+
+## Workflows
+
+### 1. Upload a file and get a share link
+```bash
+# Create bucket
+BUCKET=$(curl -s -H "Authorization: Bearer $KEY" -d '{"name":"my-bucket"}' https://api.example.com/api/buckets | jq -r .id)
+# Upload file
+curl -H "Authorization: Bearer $KEY" -F "photo.jpg=@photo.jpg" https://api.example.com/api/buckets/$BUCKET/upload
+# Share: https://dash.example.com/buckets/$BUCKET/files/photo.jpg (human)
+# Or use short_url from upload response for direct download
+```
+
+### 2. Create upload token and share
+```bash
+BUCKET=$(curl -s -H "Authorization: Bearer $KEY" -d '{"name":"uploads"}' https://api.example.com/api/buckets | jq -r .id)
+TOKEN=$(curl -s -H "Authorization: Bearer $KEY" -d '{}' https://api.example.com/api/buckets/$BUCKET/tokens | jq -r .token)
+# Share upload URL: POST https://api.example.com/api/buckets/$BUCKET/upload?token=$TOKEN
+```
+
+### 3. Download bucket as ZIP
+```bash
+curl -OJ https://api.example.com/api/buckets/$BUCKET/zip
+```
+
+### 4. Real-time notifications
+Connect to `/hub/files` via SignalR, invoke `SubscribeToBucket(bucketId)`, listen for `FileCreated`/`FileUpdated`/`FileDeleted`.
+
+### 5. Verify file integrity
+```bash
+curl -s https://api.example.com/api/buckets/$BUCKET/files/photo.jpg/verify
+# Check "valid": true
+```
+
+### 6. Browse directory tree
+```bash
+# One level
+curl -s "https://api.example.com/api/buckets/$BUCKET/ls?path=docs/"
+# Tree mode
+curl -s "https://api.example.com/api/buckets/$BUCKET/files?delimiter=/&prefix=docs/"
+```
+
+### 7. Generate dashboard login URL
+```bash
+JWT=$(curl -s -H "Authorization: Bearer $ADMIN_KEY" -d '{}' https://api.example.com/api/tokens/dashboard | jq -r .token)
+# Login URL: https://dash.example.com/?token=$JWT
+```
+
+## SDK Quick Reference
+
+**TypeScript** (`npm install @carbonfiles/client`):
+```typescript
+import { CarbonFilesClient } from "@carbonfiles/client";
+const cf = new CarbonFilesClient("https://files.example.com", "cf4_your_key");
+const bucket = await cf.buckets.create({ name: "my-bucket", expires_in: "30d" });
+await cf.buckets[bucket.id].files.upload(file, "photo.jpg");
+const files = await cf.buckets[bucket.id].files.list({ limit: 50 });
+const data = await cf.buckets[bucket.id].files["photo.jpg"].download();
+```
+
+**C#** (`dotnet add package CarbonFiles.Client`):
+```csharp
+var client = new CarbonFilesClient("https://files.example.com", "cf4_your_key");
+var bucket = await client.Buckets.CreateAsync(new CreateBucketRequest { Name = "my-bucket", ExpiresIn = "30d" });
+await client.Buckets[bucket.Id].Files.UploadFileAsync("/path/to/photo.jpg");
+var files = await client.Buckets[bucket.Id].Files.ListAsync();
+var stream = await client.Buckets[bucket.Id].Files["photo.jpg"].DownloadAsync();
+```
+
+**Python** (`pip install carbonfiles`):
+```python
+from carbonfiles import CarbonFiles
+cf = CarbonFiles("https://files.example.com", "cf4_your_key")
+bucket = cf.buckets.create("my-bucket", expires="30d")
+cf.buckets[bucket.id].files.upload("/path/to/photo.jpg")
+page = cf.buckets[bucket.id].files.list(limit=50)
+data = cf.buckets[bucket.id].files["photo.jpg"].download()
+```
+
+**PowerShell** (`Install-Module CarbonFiles`):
+```powershell
+Connect-CfServer -Uri "https://files.example.com" -Token "cf4_your_key"
+$bucket = New-CfBucket -Name "my-bucket" -ExpiresIn "30d"
+Send-CfFile -BucketId $bucket.Id -FilePath ./photo.jpg
+Get-CfFile -BucketId $bucket.Id
+Save-CfFileContent -BucketId $bucket.Id -FilePath "photo.jpg" -OutFile ./downloaded.jpg
+```
+
+**CLI** (`cf` -- self-contained binary, [releases](https://github.com/carbungo/carbon-files-cli)):
+```bash
+cf config set-url https://files.example.com
+cf config set-key cf4_your_key
+cf bucket create --name my-bucket --expires 30d
+cf file upload $BUCKET_ID ./photo.jpg
+cf file list $BUCKET_ID
+cf file download $BUCKET_ID photo.jpg ./downloaded.jpg
+```
+
+## Error Handling
+
+All errors return: `{ "error": "message", "hint?": "suggestion" }` (hint omitted when null)
+
+| Status | Meaning |
+|--------|---------|
+| 200 | OK |
+| 201 | Created |
+| 204 | No Content |
+| 206 | Partial Content |
+| 304 | Not Modified |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 413 | Payload Too Large |
+| 416 | Range Not Satisfiable |
+
+## Content-Addressable Storage
+
+Files stored by SHA-256 hash. Duplicate content stored once (dedup). Upload response includes `sha256` and `deduplicated: true/false`. Use `/verify` to check integrity. Short URLs point to content by hash.
+
+## File Serving
+
+- `Content-Type` from extension; text types get `; charset=utf-8`
+- `Accept-Ranges: bytes` -- supports Range requests for streaming/seeking
+- `ETag` -- SHA-256 hash for CAS files
+- `Cache-Control: public, no-cache` -- always revalidate
+- `?download=true` -- forces download via Content-Disposition
+- HEAD supported on content and zip endpoints
+
+## Conventions
+
+- JSON: `snake_case`, null fields omitted
+- IDs: 10-char alphanumeric (buckets), 6-char (short codes), `cf4_` prefix (API keys), `cfu_` prefix (upload tokens)
+- Expiry: `30s`, `15m`, `2h`, `7d`, `2w`, Unix timestamps, ISO 8601, or `"never"`
+- Pagination: `limit`, `offset`, `sort`, `order` on all list endpoints
+- OpenAPI spec: `GET /openapi/v1.json`. Interactive docs: `GET /scalar`
