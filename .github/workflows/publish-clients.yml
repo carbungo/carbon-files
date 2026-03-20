@@ -8,6 +8,15 @@ env:
   DOTNET_VERSION: '10.0.x'
 
 jobs:
+  extract-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
   export-spec:
     runs-on: ubuntu-latest
     outputs:
@@ -112,7 +121,7 @@ jobs:
           --source https://api.nuget.org/v3/index.json
 
   publish-python:
-    needs: export-spec
+    needs: extract-version
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -130,7 +139,7 @@ jobs:
       - name: Build
         run: |
           pip install build
-          sed -i "s/^version = .*/version = \"${{ needs.export-spec.outputs.version }}\"/" pyproject.toml
+          sed -i "s/^version = .*/version = \"${{ needs.extract-version.outputs.version }}\"/" pyproject.toml
           python -m build
 
       - name: Publish

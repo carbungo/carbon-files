@@ -5,13 +5,13 @@ Handcrafted Python client for the [CarbonFiles](https://github.com/carbungo/carb
 ## Installation
 
 ```bash
-pip install carbonfiles
+pip install carbonfiles-client
 ```
 
 For real-time event support via SignalR:
 
 ```bash
-pip install carbonfiles[events]
+pip install carbonfiles-client[events]
 ```
 
 Requires Python 3.10+.
@@ -279,7 +279,7 @@ cf.short_urls["abc123"].delete()
 Real-time events require the `events` extra:
 
 ```bash
-pip install carbonfiles[events]
+pip install carbonfiles-client[events]
 ```
 
 ```python
