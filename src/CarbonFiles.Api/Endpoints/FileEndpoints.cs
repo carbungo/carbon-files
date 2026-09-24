@@ -240,7 +240,8 @@ public static class FileEndpoints
         if (!System.IO.File.Exists(physicalPath))
             return ApiResults.NotFound("File not found");
 
-        _ = fileService.UpdateLastUsedAsync(bucketId);
+        var activity = ctx.RequestServices.GetRequiredService<IBucketActivityService>();
+        activity.Touch(bucketId);
 
         var contentType = meta.MimeType;
         if (contentType.StartsWith("text/") || contentType is "application/json" or "application/xml" or "application/javascript" or "image/svg+xml")

@@ -360,17 +360,6 @@ public sealed class FileService : IFileService
         return true;
     }
 
-    public async Task UpdateLastUsedAsync(string bucketId)
-    {
-        await Db.ExecuteAsync(_db,
-            "UPDATE Buckets SET LastUsedAt = @now WHERE Id = @bucketId",
-            p =>
-            {
-                p.AddWithValue("@now", DateTime.UtcNow);
-                p.AddWithValue("@bucketId", bucketId);
-            });
-    }
-
     public async Task<bool> PatchFileAsync(string bucketId, string path, Stream patchContent, long offset, bool append)
     {
         var entity = await Db.QueryFirstOrDefaultAsync(_db,

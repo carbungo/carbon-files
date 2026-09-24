@@ -23,6 +23,7 @@ public static class DependencyInjection
             opts.DbPath = section[nameof(CarbonFilesOptions.DbPath)] ?? "./data/carbonfiles.db";
             opts.MaxUploadSize = long.TryParse(section[nameof(CarbonFilesOptions.MaxUploadSize)], out var maxUpload) ? maxUpload : 0;
             opts.CleanupIntervalMinutes = int.TryParse(section[nameof(CarbonFilesOptions.CleanupIntervalMinutes)], out var cleanup) ? cleanup : 60;
+            opts.BucketActivityIntervalSeconds = int.TryParse(section[nameof(CarbonFilesOptions.BucketActivityIntervalSeconds)], out var activityInterval) && activityInterval > 0 ? activityInterval : 5;
             opts.CorsOrigins = section[nameof(CarbonFilesOptions.CorsOrigins)] ?? "*";
             opts.EnableScalar = !bool.TryParse(section[nameof(CarbonFilesOptions.EnableScalar)], out var scalar) || scalar;
             opts.SiteDomain = section[nameof(CarbonFilesOptions.SiteDomain)];
@@ -65,6 +66,11 @@ public static class DependencyInjection
         services.AddScoped<IShortUrlService, ShortUrlService>();
         services.AddScoped<IUploadTokenService, UploadTokenService>();
         services.AddScoped<IStatsService, StatsService>();
+
+        // Deduplicated bucket activity writer
+        services.AddSingleton<BucketActivityService>();
+        services.AddSingleton<IBucketActivityService>(sp => sp.GetRequiredService<BucketActivityService>());
+        services.AddHostedService(sp => sp.GetRequiredService<BucketActivityService>());
 
         // Background cleanup
         services.AddScoped<CleanupRepository>();

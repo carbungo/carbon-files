@@ -13,6 +13,7 @@ public sealed class CarbonFilesOptions
     public string DbPath { get; set; } = "./data/carbonfiles.db";
     public long MaxUploadSize { get; set; } = 0; // 0 = unlimited
     public int CleanupIntervalMinutes { get; set; } = 60;
+    public int BucketActivityIntervalSeconds { get; set; } = 5;
     public string CorsOrigins { get; set; } = "*";
     public bool EnableScalar { get; set; } = true;
     public string? SiteDomain { get; set; }
