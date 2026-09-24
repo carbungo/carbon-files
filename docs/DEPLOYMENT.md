@@ -69,6 +69,7 @@ volumes:
 | `CarbonFiles__CleanupIntervalMinutes` | No | `60` | Minutes between expired bucket + orphan cleanup runs |
 | `CarbonFiles__CorsOrigins` | No | `*` | Comma-separated allowed origins. Set to dashboard URL in production. |
 | `CarbonFiles__EnableScalar` | No | `true` | Enable interactive API docs at `/scalar` |
+| `CarbonFiles__SiteDomain` | No | -- | Wildcard domain for bucket static sites (for example, `files.example.com`) |
 
 ### Dashboard (service: `dashboard`)
 

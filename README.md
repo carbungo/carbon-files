@@ -84,6 +84,7 @@ await connection.invoke("SubscribeToBucket", bucketId);
 | Max Upload | `CarbonFiles__MaxUploadSize` | `0` (unlimited) | Max upload size in bytes |
 | Cleanup Interval | `CarbonFiles__CleanupIntervalMinutes` | `60` | Expired bucket cleanup interval |
 | CORS Origins | `CarbonFiles__CorsOrigins` | `*` | Allowed CORS origins |
+| Site Domain | `CarbonFiles__SiteDomain` | Disabled | Wildcard domain for bucket static sites (for example, `files.example.com`) |
 
 ## Architecture
 

@@ -133,7 +133,8 @@ Use the standard .NET configuration system (`appsettings.json`, environment vari
     "DataDir": "./data",
     "DbPath": "./data/carbonfiles.db",
     "MaxUploadSize": 0,
-    "CleanupIntervalMinutes": 60
+    "CleanupIntervalMinutes": 60,
+    "SiteDomain": null
   }
 }
 ```
@@ -149,6 +150,7 @@ All settings are also overridable via environment variables (e.g. `CarbonFiles__
 | `MaxUploadSize` | Max upload size in bytes | `0` (unlimited) |
 | `CleanupIntervalMinutes` | Minutes between expired bucket cleanup | `60` |
 | `CorsOrigins` | Comma-separated allowed origins for CORS | `*` |
+| `SiteDomain` | Wildcard domain for bucket static sites (for example, `files.example.com`) | Disabled |
 
 CORS must be configured — any browser-based frontend (including dashboard JWT flow) calls this API directly. If `CorsOrigins` is `*`, allow all origins. Otherwise, restrict to the listed origins. Allow headers: `Authorization`, `Content-Type`. Allow methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`. Expose headers: `Content-Range`, `Accept-Ranges`, `Content-Length`, `ETag`, `Last-Modified`.
 

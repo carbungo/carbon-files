@@ -61,6 +61,7 @@ public class TestFixture : IAsyncLifetime
                     ["CarbonFiles:AdminKey"] = "test-admin-key",
                     ["CarbonFiles:DataDir"] = _tempDir,
                     ["CarbonFiles:DbPath"] = Path.Combine(_tempDir, "test.db"),
+                    ["CarbonFiles:SiteDomain"] = "files.test",
                 });
             });
         });

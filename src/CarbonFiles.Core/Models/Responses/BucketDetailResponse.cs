@@ -11,6 +11,7 @@ public sealed class BucketDetailResponse
     public DateTime CreatedAt { get; init; }
     public DateTime? ExpiresAt { get; init; }
     public DateTime? LastUsedAt { get; init; }
+    public bool SpaMode { get; init; }
     public int FileCount { get; init; }
     public long TotalSize { get; init; }
     public int UniqueContentCount { get; init; }

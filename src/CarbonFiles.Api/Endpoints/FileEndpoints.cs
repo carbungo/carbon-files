@@ -201,7 +201,7 @@ public static class FileEndpoints
         .WithDescription("Auth: Bucket owner, admin, or upload token (?token=). Writes to a byte range of an existing file using Content-Range, or appends with X-Append: true.");
     }
 
-    private static async Task<IResult> ServeFileContent(string bucketId, string path, HttpContext ctx,
+    internal static async Task<IResult> ServeFileContent(string bucketId, string path, HttpContext ctx,
         IFileService fileService, FileStorageService storageService, ContentStorageService contentStorageService)
     {
         var meta = await fileService.GetMetadataAsync(bucketId, path);

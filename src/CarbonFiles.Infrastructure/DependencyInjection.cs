@@ -25,6 +25,7 @@ public static class DependencyInjection
             opts.CleanupIntervalMinutes = int.TryParse(section[nameof(CarbonFilesOptions.CleanupIntervalMinutes)], out var cleanup) ? cleanup : 60;
             opts.CorsOrigins = section[nameof(CarbonFilesOptions.CorsOrigins)] ?? "*";
             opts.EnableScalar = !bool.TryParse(section[nameof(CarbonFilesOptions.EnableScalar)], out var scalar) || scalar;
+            opts.SiteDomain = section[nameof(CarbonFilesOptions.SiteDomain)];
         });
 
         // Also read locally for startup-time values (DbPath, JwtSecret)

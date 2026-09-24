@@ -54,6 +54,48 @@ public class DatabaseInitializerTests : IDisposable
         Assert.Equal("ok", result);
     }
 
+    [Fact]
+    public void Initialize_AddsSpaModeColumnToExistingDatabase()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"cf_upgrade_test_{Guid.NewGuid():N}.db");
+        try
+        {
+            using var connection = new SqliteConnection($"Data Source={dbPath}");
+            connection.Open();
+            using (var create = connection.CreateCommand())
+            {
+                create.CommandText = """
+                    CREATE TABLE "Buckets" (
+                        "Id" TEXT NOT NULL PRIMARY KEY,
+                        "Name" TEXT NOT NULL,
+                        "Owner" TEXT NOT NULL,
+                        "OwnerKeyPrefix" TEXT NULL,
+                        "Description" TEXT NULL,
+                        "CreatedAt" TEXT NOT NULL,
+                        "ExpiresAt" TEXT NULL,
+                        "LastUsedAt" TEXT NULL,
+                        "FileCount" INTEGER NOT NULL DEFAULT 0,
+                        "TotalSize" INTEGER NOT NULL DEFAULT 0,
+                        "DownloadCount" INTEGER NOT NULL DEFAULT 0
+                    );
+                    """;
+                create.ExecuteNonQuery();
+            }
+
+            DatabaseInitializer.Initialize(connection);
+
+            using var columns = connection.CreateCommand();
+            columns.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Buckets') WHERE name = 'SpaMode';";
+            Assert.Equal(1L, (long)columns.ExecuteScalar()!);
+        }
+        finally
+        {
+            try { File.Delete(dbPath); } catch { }
+            try { File.Delete(dbPath + "-wal"); } catch { }
+            try { File.Delete(dbPath + "-shm"); } catch { }
+        }
+    }
+
     public void Dispose()
     {
         var dbPath = _connection.DataSource;

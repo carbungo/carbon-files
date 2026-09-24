@@ -84,7 +84,7 @@ public static class BucketEndpoints
             if (ctx.RequireAuth(out var auth) is { } err) return err;
 
             // At least one field required
-            if (request.Name == null && request.Description == null && request.ExpiresIn == null)
+            if (request.Name == null && request.Description == null && request.ExpiresIn == null && request.SpaMode == null)
                 return ApiResults.BadRequest("At least one field is required");
 
             try
@@ -111,7 +111,7 @@ public static class BucketEndpoints
         .Produces<ErrorResponse>(403)
         .Produces<ErrorResponse>(404)
         .WithSummary("Update bucket")
-        .WithDescription("Auth: Bucket owner or admin. Updates bucket name, description, or expiry.");
+        .WithDescription("Auth: Bucket owner or admin. Updates bucket name, description, expiry, or SPA mode.");
 
         // DELETE /api/buckets/{id} — Delete bucket (owner or admin)
         group.MapDelete("/{id}", async (string id, HttpContext ctx, IBucketService svc, ILoggerFactory loggerFactory) =>

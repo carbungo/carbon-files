@@ -15,6 +15,7 @@ public static class EntityMapping
         CreatedAt = entity.CreatedAt,
         ExpiresAt = entity.ExpiresAt,
         LastUsedAt = entity.LastUsedAt,
+        SpaMode = entity.SpaMode ?? false,
         FileCount = entity.FileCount,
         TotalSize = entity.TotalSize
     };

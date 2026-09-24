@@ -12,6 +12,7 @@ public sealed class BucketEntity
     public DateTime CreatedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public DateTime? LastUsedAt { get; set; }
+    public bool? SpaMode { get; set; }
     public int FileCount { get; set; }
     public long TotalSize { get; set; }
     public long DownloadCount { get; set; }
@@ -28,6 +29,7 @@ public sealed class BucketEntity
         CreatedAt = r.GetDateTime(r.GetOrdinal("CreatedAt")),
         ExpiresAt = r.IsDBNull(r.GetOrdinal("ExpiresAt")) ? null : r.GetDateTime(r.GetOrdinal("ExpiresAt")),
         LastUsedAt = r.IsDBNull(r.GetOrdinal("LastUsedAt")) ? null : r.GetDateTime(r.GetOrdinal("LastUsedAt")),
+        SpaMode = r.IsDBNull(r.GetOrdinal("SpaMode")) ? null : r.GetBoolean(r.GetOrdinal("SpaMode")),
         FileCount = r.GetInt32(r.GetOrdinal("FileCount")),
         TotalSize = r.GetInt64(r.GetOrdinal("TotalSize")),
         DownloadCount = r.GetInt64(r.GetOrdinal("DownloadCount")),

@@ -49,10 +49,11 @@ public sealed class BucketService : IBucketService
             Description = request.Description,
             CreatedAt = now,
             ExpiresAt = expiresAt,
+            SpaMode = request.SpaMode ?? false,
         };
 
         await Db.ExecuteAsync(_db,
-            "INSERT INTO Buckets (Id, Name, Owner, OwnerKeyPrefix, Description, CreatedAt, ExpiresAt) VALUES (@Id, @Name, @Owner, @OwnerKeyPrefix, @Description, @CreatedAt, @ExpiresAt)",
+            "INSERT INTO Buckets (Id, Name, Owner, OwnerKeyPrefix, Description, CreatedAt, ExpiresAt, SpaMode) VALUES (@Id, @Name, @Owner, @OwnerKeyPrefix, @Description, @CreatedAt, @ExpiresAt, @SpaMode)",
             p =>
             {
                 p.AddWithValue("@Id", entity.Id);
@@ -62,6 +63,7 @@ public sealed class BucketService : IBucketService
                 p.AddWithValue("@Description", (object?)entity.Description ?? DBNull.Value);
                 p.AddWithValue("@CreatedAt", entity.CreatedAt);
                 p.AddWithValue("@ExpiresAt", (object?)entity.ExpiresAt ?? DBNull.Value);
+                p.AddWithValue("@SpaMode", entity.SpaMode ?? false);
             });
 
         _logger.LogInformation("Created bucket {BucketId} with name {Name} for owner {Owner}, expires {ExpiresAt}",
@@ -140,10 +142,13 @@ public sealed class BucketService : IBucketService
     /// <summary>
     /// Fetches a bucket entity by ID, returning null if not found or expired.
     /// </summary>
-    private async Task<BucketEntity?> FetchActiveBucketEntityAsync(string id)
+    private async Task<BucketEntity?> FetchActiveBucketEntityAsync(string id, bool ignoreCase = false)
     {
+        var sql = ignoreCase
+            ? "SELECT * FROM Buckets WHERE Id = @id COLLATE NOCASE ORDER BY CASE WHEN Id = @id THEN 0 ELSE 1 END LIMIT 1"
+            : "SELECT * FROM Buckets WHERE Id = @id";
         var entity = await Db.QueryFirstOrDefaultAsync(_db,
-            "SELECT * FROM Buckets WHERE Id = @id",
+            sql,
             p => p.AddWithValue("@id", id),
             BucketEntity.Read);
         if (entity == null)
@@ -222,6 +227,7 @@ public sealed class BucketService : IBucketService
             CreatedAt = entity.CreatedAt,
             ExpiresAt = entity.ExpiresAt,
             LastUsedAt = entity.LastUsedAt,
+            SpaMode = entity.SpaMode ?? false,
             FileCount = entity.FileCount,
             TotalSize = entity.TotalSize,
             UniqueContentCount = uniqueContentCount,
@@ -233,9 +239,9 @@ public sealed class BucketService : IBucketService
         return response;
     }
 
-    public async Task<Bucket?> GetBucketAsync(string id)
+    public async Task<Bucket?> GetBucketAsync(string id, bool ignoreCase = false)
     {
-        var entity = await FetchActiveBucketEntityAsync(id);
+        var entity = await FetchActiveBucketEntityAsync(id, ignoreCase);
         return entity?.ToBucket();
     }
 
@@ -265,13 +271,17 @@ public sealed class BucketService : IBucketService
         if (request.ExpiresIn != null)
             entity.ExpiresAt = ExpiryParser.Parse(request.ExpiresIn);
 
+        if (request.SpaMode.HasValue)
+            entity.SpaMode = request.SpaMode.Value;
+
         await Db.ExecuteAsync(_db,
-            "UPDATE Buckets SET Name = @Name, Description = @Description, ExpiresAt = @ExpiresAt WHERE Id = @Id",
+            "UPDATE Buckets SET Name = @Name, Description = @Description, ExpiresAt = @ExpiresAt, SpaMode = @SpaMode WHERE Id = @Id",
             p =>
             {
                 p.AddWithValue("@Name", entity.Name);
                 p.AddWithValue("@Description", (object?)entity.Description ?? DBNull.Value);
                 p.AddWithValue("@ExpiresAt", (object?)entity.ExpiresAt ?? DBNull.Value);
+                p.AddWithValue("@SpaMode", entity.SpaMode ?? false);
                 p.AddWithValue("@Id", entity.Id);
             });
 
@@ -284,7 +294,8 @@ public sealed class BucketService : IBucketService
         {
             Name = request.Name,
             Description = request.Description,
-            ExpiresAt = request.ExpiresIn != null ? entity.ExpiresAt : null
+            ExpiresAt = request.ExpiresIn != null ? entity.ExpiresAt : null,
+            SpaMode = request.SpaMode
         };
         await _notifications.NotifyBucketUpdated(id, changes);
 

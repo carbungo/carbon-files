@@ -21,6 +21,7 @@ public static class DatabaseInitializer
             "CreatedAt" TEXT NOT NULL,
             "ExpiresAt" TEXT NULL,
             "LastUsedAt" TEXT NULL,
+            "SpaMode" INTEGER NULL DEFAULT 0,
             "FileCount" INTEGER NOT NULL DEFAULT 0,
             "TotalSize" INTEGER NOT NULL DEFAULT 0,
             "DownloadCount" INTEGER NOT NULL DEFAULT 0
@@ -105,8 +106,27 @@ public static class DatabaseInitializer
         schemaCmd.CommandText = Schema;
         schemaCmd.ExecuteNonQuery();
 
+        EnsureSpaModeColumn(sqlite);
+
         // Integrity check
         RunIntegrityCheck(sqlite, logger);
+    }
+
+    private static void EnsureSpaModeColumn(SqliteConnection sqlite)
+    {
+        using var columnsCmd = sqlite.CreateCommand();
+        columnsCmd.CommandText = "PRAGMA table_info(\"Buckets\");";
+        using var reader = columnsCmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), "SpaMode", StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+
+        reader.Close();
+        using var alterCmd = sqlite.CreateCommand();
+        alterCmd.CommandText = "ALTER TABLE \"Buckets\" ADD COLUMN \"SpaMode\" INTEGER NULL DEFAULT 0;";
+        alterCmd.ExecuteNonQuery();
     }
 
     internal static bool RunIntegrityCheck(SqliteConnection sqlite, ILogger? logger)

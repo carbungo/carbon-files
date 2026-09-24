@@ -179,6 +179,7 @@ using (var scope = app.Services.CreateScope())
 // Middleware
 app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseCors();
+app.UseMiddleware<StaticSiteMiddleware>();
 app.UseMiddleware<AuthMiddleware>();
 
 // Endpoints

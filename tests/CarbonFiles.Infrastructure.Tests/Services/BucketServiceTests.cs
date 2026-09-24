@@ -173,6 +173,33 @@ public class BucketServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateAsync_PersistsSpaMode()
+    {
+        var result = await _sut.CreateAsync(
+            new CreateBucketRequest { Name = "spa", SpaMode = true }, AuthContext.Admin());
+
+        result.SpaMode.Should().BeTrue();
+        var entity = await Db.QueryFirstOrDefaultAsync(_db,
+            "SELECT * FROM Buckets WHERE Id = @Id",
+            p => p.AddWithValue("@Id", result.Id),
+            BucketEntity.Read);
+        entity!.SpaMode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetBucketAsync_IgnoreCaseReturnsCanonicalId()
+    {
+        await Db.ExecuteAsync(_db,
+            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
+            p => { p.AddWithValue("@Id", "AbCdEf1234"); p.AddWithValue("@Name", "site"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
+
+        var result = await _sut.GetBucketAsync("abcdef1234", ignoreCase: true);
+
+        result.Should().NotBeNull();
+        result!.Id.Should().Be("AbCdEf1234");
+    }
+
+    [Fact]
     public async Task CreateAsync_OwnerAuth_SetsKeyPrefix()
     {
         var auth = AuthContext.Owner("agent", "cf4_aabbccdd");
@@ -436,6 +463,20 @@ public class BucketServiceTests : IDisposable
 
         result.Should().NotBeNull();
         result!.ExpiresAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_UpdatesSpaMode()
+    {
+        await Db.ExecuteAsync(_db,
+            "INSERT INTO Buckets (Id, Name, Owner, CreatedAt) VALUES (@Id, @Name, @Owner, @CreatedAt)",
+            p => { p.AddWithValue("@Id", "updspa0001"); p.AddWithValue("@Name", "spa-test"); p.AddWithValue("@Owner", "admin"); p.AddWithValue("@CreatedAt", DateTime.UtcNow); });
+
+        var result = await _sut.UpdateAsync("updspa0001",
+            new UpdateBucketRequest { SpaMode = true }, AuthContext.Admin());
+
+        result.Should().NotBeNull();
+        result!.SpaMode.Should().BeTrue();
     }
 
     [Fact]
