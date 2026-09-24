@@ -6,7 +6,7 @@ public static class IdGenerator
 {
     private const string AlphaNumeric = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-    public static string GenerateBucketId() => GenerateRandomString(10, AlphaNumeric);
+    public static string GenerateBucketId() => GenerateRandomString(10, "abcdefghijklmnopqrstuvwxyz0123456789");
     public static string GenerateShortCode() => GenerateRandomString(6, AlphaNumeric);
 
     public static string GenerateUploadToken()

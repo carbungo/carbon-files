@@ -10,6 +10,9 @@ public partial class IdGeneratorTests
     [GeneratedRegex("^[a-zA-Z0-9]+$")]
     private static partial Regex AlphaNumericRegex();
 
+    [GeneratedRegex("^[a-z0-9]+$")]
+    private static partial Regex LowercaseAlphaNumericRegex();
+
     [GeneratedRegex("^cf4_[0-9a-f]{8}_[0-9a-f]{32}$")]
     private static partial Regex ApiKeyFullRegex();
 
@@ -20,12 +23,12 @@ public partial class IdGeneratorTests
     private static partial Regex UploadTokenRegex();
 
     [Fact]
-    public void GenerateBucketId_Returns10AlphanumericCharacters()
+    public void GenerateBucketId_Returns10LowercaseAlphanumericCharacters()
     {
         var id = IdGenerator.GenerateBucketId();
 
         id.Should().HaveLength(10);
-        AlphaNumericRegex().IsMatch(id).Should().BeTrue();
+        LowercaseAlphaNumericRegex().IsMatch(id).Should().BeTrue();
     }
 
     [Fact]
