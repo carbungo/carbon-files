@@ -50,6 +50,7 @@ After setup, all `cf` commands use the saved URL and token automatically. Use `c
 | Get bucket summary | `cf bucket summary <id>` |
 | Upload file(s) | `cf file upload <bucket-id> ./file.jpg` |
 | Upload recursively | `cf file upload <bucket-id> ./dir/ -r` |
+| Sync static site | `CF_URL=... CF_BUCKET=... CF_TOKEN=... python3 scripts/deploy-site.py out/` |
 | Upload from stdin | `echo "data" \| cf file upload <bucket-id> --stdin -n file.txt` |
 | List files | `cf file list <bucket-id>` |
 | Get file metadata | `cf file info <bucket-id> <path>` |
@@ -318,6 +319,15 @@ Raw body = file bytes.
 { "uploaded": [{ ...BucketFile, "deduplicated": bool }] }
 ```
 
+`POST /api/buckets/{id}/deploy/sync` -- Owner/Admin/UploadToken (`?token=...`) -- 200
+```json
+// Request: complete desired bucket file set (1 to 10000 unique normalized paths)
+{ "files": [{ "path": "index.html", "sha256": "64 lowercase hex characters" }] }
+// Response
+{ "kept": 1, "deleted": 12 }
+```
+Verifies every path and hash before deleting files absent from the manifest in one transaction. Returns 409 on mismatch; empty manifest is rejected. This replaces the entire bucket file set. Uploads are individually visible before sync, so the overall deploy is not atomic. Use `scripts/deploy-site.py` for hash-based incremental uploads, assets before HTML, and prune.
+
 ### Upload Tokens
 
 `POST /api/buckets/{id}/tokens` -- Owner/Admin -- 201
@@ -472,10 +482,12 @@ Files stored by SHA-256 hash. Duplicate content stored once (dedup). Upload resp
 
 ## File Serving
 
-- `Content-Type` from extension; text types get `; charset=utf-8`
+- `Content-Type` from a broad extension map (`.webmanifest` is `application/manifest+json`, `.json` and `.map` are `application/json`); extensionless and unknown paths use magic bytes or UTF-8 text detection. Textual types get `; charset=utf-8`. Serving recalculates the type, including for older files with wrong stored MIME metadata; no backfill is needed.
 - `Accept-Ranges: bytes` -- supports Range requests for streaming/seeking
 - `ETag` -- SHA-256 hash for CAS files
-- `Cache-Control: public, no-cache` -- always revalidate
+- API downloads and site HTML: `Cache-Control: public, no-cache`; site `/_next/static/` assets: one year immutable; other site assets: one hour
+- Gzip and Brotli for compressible responses when requested; `Vary: Accept-Encoding`
+- Site responses set `X-Content-Type-Options: nosniff`
 - `?download=true` -- forces download via Content-Disposition
 - HEAD supported on content and zip endpoints
 

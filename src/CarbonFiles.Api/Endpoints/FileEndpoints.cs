@@ -2,6 +2,7 @@ using CarbonFiles.Api.Auth;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Responses;
+using CarbonFiles.Core.Utilities;
 using CarbonFiles.Infrastructure.Services;
 using Microsoft.Net.Http.Headers;
 
@@ -223,38 +224,47 @@ public static class FileEndpoints
             etag = $"\"{meta.Size}-{meta.UpdatedAt.Ticks}\"";
         }
 
-        var lastModified = meta.UpdatedAt;
-
-        if (ctx.Request.Headers.IfNoneMatch.FirstOrDefault() == etag)
-            return Results.StatusCode(304);
-
-        if (ctx.Request.Headers.IfModifiedSince.Count > 0)
-        {
-            if (DateTimeOffset.TryParse(ctx.Request.Headers.IfModifiedSince, out var ifModifiedSince))
-            {
-                if (lastModified <= ifModifiedSince.UtcDateTime.AddSeconds(1))
-                    return Results.StatusCode(304);
-            }
-        }
-
         if (!System.IO.File.Exists(physicalPath))
             return ApiResults.NotFound("File not found");
 
         var activity = ctx.RequestServices.GetRequiredService<IBucketActivityService>();
         activity.Touch(bucketId);
 
-        var contentType = meta.MimeType;
-        if (contentType.StartsWith("text/") || contentType is "application/json" or "application/xml" or "application/javascript" or "image/svg+xml")
-            contentType += "; charset=utf-8";
+        var contentType = MimeDetector.DetectFromExtension(path);
+        if (contentType == "application/octet-stream")
+        {
+            var prefix = new byte[(int)Math.Min(new FileInfo(physicalPath).Length, 4096)];
+            await using var stored = System.IO.File.OpenRead(physicalPath);
+            await stored.ReadExactlyAsync(prefix, ctx.RequestAborted);
+            contentType = MimeDetector.Detect(path, prefix);
+        }
+        contentType = MimeDetector.WithCharset(contentType);
 
-        ctx.Response.Headers.CacheControl = "public, no-cache";
+        var isSite = ctx.Items.ContainsKey("CarbonFiles.SiteRequest");
+        ctx.Response.Headers.CacheControl = isSite && path.StartsWith("_next/static/", StringComparison.Ordinal)
+            ? "public, max-age=31536000, immutable"
+            : isSite && !path.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+                ? "public, max-age=3600"
+                : "public, no-cache";
+        ctx.Response.Headers.ETag = etag;
+        ctx.Response.Headers.LastModified = DateTime.SpecifyKind(meta.UpdatedAt, DateTimeKind.Utc).ToString("R");
+
+        if (ctx.Request.Headers.IfNoneMatch.Count > 0)
+        {
+            var requested = ctx.Request.Headers.IfNoneMatch.ToString().Split(',', StringSplitOptions.TrimEntries);
+            if (requested.Any(candidate => candidate == etag || candidate == "*" || candidate == "W/" + etag))
+                return Results.StatusCode(StatusCodes.Status304NotModified);
+        }
+        else if (DateTimeOffset.TryParse(ctx.Request.Headers.IfModifiedSince, out var since) &&
+                 meta.UpdatedAt <= since.UtcDateTime.AddSeconds(1))
+            return Results.StatusCode(StatusCodes.Status304NotModified);
 
         string? fileDownloadName = null;
         if (ctx.Request.Query.ContainsKey("download") && ctx.Request.Query["download"] == "true")
             fileDownloadName = meta.Name;
 
         var etagValue = new EntityTagHeaderValue(etag);
-        var lastModifiedOffset = new DateTimeOffset(DateTime.SpecifyKind(lastModified, DateTimeKind.Utc));
+        var lastModifiedOffset = new DateTimeOffset(DateTime.SpecifyKind(meta.UpdatedAt, DateTimeKind.Utc));
 
         return TypedResults.PhysicalFile(
             physicalPath,

@@ -524,12 +524,12 @@ Paginated. Sortable by `name`, `path`, `size`, `created_at`, `updated_at`, `mime
 Returns raw file bytes streamed from disk.
 
 Headers set:
-- `Content-Type` — detected from file extension
+- `Content-Type` — detected from a broad extension map, or from magic bytes/UTF-8 text for extensionless and unknown names; textual types include `charset=utf-8`. The serving path corrects older stored MIME values without a backfill.
 - `Content-Length` — file size
 - `Accept-Ranges: bytes`
 - `ETag` — hash of file content or `"{size}-{lastModified}"` (cheap to compute)
 - `Last-Modified` — file's `updated_at` timestamp
-- `Cache-Control: public, no-cache` — always revalidate via ETag/Last-Modified. Files can be overwritten (re-upload same path), so `max-age` isn't safe. `no-cache` means the browser caches the file but checks with the server before using it — a 304 response is just headers, no body, so it's still fast.
+- API downloads use `Cache-Control: public, no-cache` and revalidate via ETag/Last-Modified. Bucket site HTML uses the same policy; `/_next/static/` assets use one year immutable and other site assets use one hour.
 
 Conditional request support:
 - **`If-None-Match`** — compare against `ETag`, return `304 Not Modified` if match
@@ -668,6 +668,16 @@ curl -X PUT "/api/buckets/abc123/upload/stream?filename=big-video.mp4" \
 **Implementation:** `await request.Body.CopyToAsync(fileStream)` — one line, zero buffering.
 
 ---
+
+### Static site deploy sync
+
+`POST /api/buckets/{id}/deploy/sync?token={upload-token}` accepts a complete manifest for the bucket:
+
+```json
+{ "files": [{ "path": "index.html", "sha256": "64 hex characters" }] }
+```
+
+Bucket owners and admins may authenticate with a bearer token; a scoped upload token is also accepted. Every path and SHA-256 must match an uploaded file. The endpoint returns `{ "kept": 1, "deleted": 12 }` after deleting all other bucket files in one transaction. Missing or mismatched files return 409 without pruning. An empty manifest is rejected. Use a dedicated site bucket, since sync replaces its complete file set. The repository's `scripts/deploy-site.py` compares hashes, uploads changed assets before HTML, and calls this endpoint. Uploads are visible before the sync call, so the whole deploy is not atomic.
 
 ### Upload Tokens
 

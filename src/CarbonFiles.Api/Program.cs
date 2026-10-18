@@ -8,6 +8,8 @@ using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Infrastructure;
 using CarbonFiles.Infrastructure.Data;
 using Scalar.AspNetCore;
+using Microsoft.AspNetCore.ResponseCompression;
+using System.IO.Compression;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -129,6 +131,19 @@ builder.Services.AddOpenApi(options =>
 // Infrastructure (EF Core, auth)
 builder.Services.AddInfrastructure(builder.Configuration);
 
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+    options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[]
+    {
+        "application/manifest+json", "application/xml", "image/svg+xml", "text/javascript", "text/markdown"
+    });
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+
 // Real-time notifications via SignalR
 builder.Services.AddScoped<INotificationService, HubNotificationService>();
 
@@ -179,6 +194,7 @@ using (var scope = app.Services.CreateScope())
 // Middleware
 app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseCors();
+app.UseResponseCompression();
 app.UseMiddleware<StaticSiteMiddleware>();
 app.UseMiddleware<AuthMiddleware>();
 
@@ -187,6 +203,7 @@ app.MapHealthEndpoints();
 app.MapKeyEndpoints();
 app.MapBucketEndpoints();
 app.MapUploadEndpoints();
+app.MapDeployEndpoints();
 app.MapUploadTokenEndpoints();
 app.MapFileEndpoints();
 app.MapTokenEndpoints();

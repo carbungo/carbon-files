@@ -319,6 +319,10 @@ unsubscribe = events.on_file_created(lambda data: print(data))
 unsubscribe()
 ```
 
+## Static site deploy sync
+
+After uploading every desired file, call `cf.buckets[bucket_id].sync_deploy([{"path": "index.html", "sha256": hash}], token=upload_token)` to verify the manifest and prune every other file in the bucket. The async client has the same method. For a full directory, use the repository's `scripts/deploy-site.py`.
+
 ## Error Handling
 
 API errors raise `CarbonFilesError` with `status_code`, `error`, and optional `hint`:

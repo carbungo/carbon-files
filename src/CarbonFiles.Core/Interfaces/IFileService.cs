@@ -1,5 +1,6 @@
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Responses;
+using CarbonFiles.Core.Models.Requests;
 
 namespace CarbonFiles.Core.Interfaces;
 
@@ -13,4 +14,5 @@ public interface IFileService
     Task<bool> DeleteAsync(string bucketId, string path, AuthContext auth);
     Task<bool> PatchFileAsync(string bucketId, string path, Stream content, long offset, bool append);
     Task<VerifyResponse?> VerifyAsync(string bucketId, string path);
+    Task<SyncDeployResponse?> SyncDeployAsync(string bucketId, IReadOnlyList<DeployFile> files, CancellationToken ct = default);
 }

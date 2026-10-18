@@ -24,6 +24,7 @@ The API is available at `http://localhost:8080`. Set your admin key via the `Car
 - **Stream uploads** — PUT large files without multipart overhead
 - **LLM-friendly** — plaintext bucket summaries, content negotiation, clean JSON
 - **Client SDKs** — TypeScript, C#, Python, and PowerShell
+- **Static site hosting** — bucket subdomains, clean URLs, SPA fallback, caching, compression, and manifest based deploy sync
 
 ## Usage
 
@@ -72,6 +73,19 @@ connection.on("BucketUpdated", (bucketId, changes) => { /* ... */ });
 await connection.start();
 await connection.invoke("SubscribeToBucket", bucketId);
 ```
+
+## Static site deploys
+
+Set `CarbonFiles__SiteDomain=files.example.com` and point `*.files.example.com` at the API. A bucket is served at `https://{bucket-id}.files.example.com/`. Root `index.html`, clean URLs (`/daily/` to `daily/index.html`), SPA fallback, and a custom `404.html` are supported.
+
+Use a bucket upload token in CI and the included Python 3 deploy script:
+
+```bash
+CF_URL=https://files.example.com CF_BUCKET=<bucket-id> CF_TOKEN=<upload-token> \
+  python3 scripts/deploy-site.py out/
+```
+
+The script hashes local files, skips unchanged uploads, uploads assets before HTML, and sends a verified manifest to prune stale files. The manifest replaces the **entire bucket file set**; use a dedicated site bucket. The prune is transactional, but uploads are visible as they arrive, so this is not an atomic site switch. Upload tokens need enough remaining uploads for changed files. See [deployment details](docs/DEPLOYMENT.md#static-site-deploys).
 
 ## Configuration
 

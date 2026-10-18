@@ -17,6 +17,7 @@
         'Get-CfFile'
         'Remove-CfFile'
         'Send-CfFile'
+        'Sync-CfDeploy'
         'Save-CfFileContent'
         'New-CfApiKey'
         'Get-CfApiKey'

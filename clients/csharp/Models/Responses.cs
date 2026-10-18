@@ -328,3 +328,12 @@ public class BucketChanges
     [JsonPropertyName("expires_at")]
     public DateTimeOffset? ExpiresAt { get; set; }
 }
+
+public class SyncDeployResponse
+{
+    [JsonPropertyName("kept")]
+    public int Kept { get; set; }
+
+    [JsonPropertyName("deleted")]
+    public int Deleted { get; set; }
+}

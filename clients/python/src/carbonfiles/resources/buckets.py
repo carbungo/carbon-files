@@ -3,7 +3,7 @@ from __future__ import annotations
 import urllib.parse
 from collections.abc import AsyncGenerator, Generator
 
-from carbonfiles.models.buckets import Bucket, BucketDetail
+from carbonfiles.models.buckets import Bucket, BucketDetail, SyncDeployResponse
 from carbonfiles.models.common import PaginatedResponse
 from carbonfiles.transport import AsyncTransport, SyncTransport
 
@@ -113,6 +113,10 @@ class BucketResource:
 
     def download_zip(self) -> bytes:
         return self._transport.get_bytes(f"{self._base}/zip")
+
+    def sync_deploy(self, files: list[dict[str, str]], *, token: str | None = None) -> SyncDeployResponse:
+        url = SyncTransport.build_url(f"{self._base}/deploy/sync", {"token": token} if token else None)
+        return self._transport.post(url, {"files": files}, SyncDeployResponse)
 
 
 # ---------------------------------------------------------------------------
@@ -225,3 +229,7 @@ class AsyncBucketResource:
 
     async def download_zip(self) -> bytes:
         return await self._transport.get_bytes(f"{self._base}/zip")
+
+    async def sync_deploy(self, files: list[dict[str, str]], *, token: str | None = None) -> SyncDeployResponse:
+        url = AsyncTransport.build_url(f"{self._base}/deploy/sync", {"token": token} if token else None)
+        return await self._transport.post(url, {"files": files}, SyncDeployResponse)

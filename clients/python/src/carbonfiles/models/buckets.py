@@ -28,6 +28,11 @@ class BucketDetail(Bucket):
     has_more_files: bool = False
 
 
+class SyncDeployResponse(BaseModel):
+    kept: int
+    deleted: int
+
+
 def _rebuild_models() -> None:
     from carbonfiles.models.files import BucketFile  # noqa: F401
 

@@ -166,6 +166,7 @@ Get-CfBucket | ForEach-Object { Get-CfFile -BucketId $_.Id }
 | `Save-CfBucketZip` | Download bucket as ZIP |
 | `Get-CfFile` | List or get files |
 | `Send-CfFile` | Upload a file |
+| `Sync-CfDeploy` | Verify a complete path/SHA-256 manifest and prune other bucket files |
 | `Save-CfFileContent` | Download file content |
 | `Remove-CfFile` | Delete a file |
 | `New-CfApiKey` | Create an API key |

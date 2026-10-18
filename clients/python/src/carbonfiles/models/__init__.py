@@ -1,4 +1,4 @@
-from carbonfiles.models.buckets import Bucket, BucketDetail
+from carbonfiles.models.buckets import Bucket, BucketDetail, SyncDeployResponse
 from carbonfiles.models.common import ErrorResponse, PaginatedResponse
 from carbonfiles.models.files import (
     BucketFile,
@@ -19,6 +19,7 @@ __all__ = [
     "ApiKeyUsageResponse",
     "Bucket",
     "BucketDetail",
+    "SyncDeployResponse",
     "BucketFile",
     "DashboardTokenInfo",
     "DashboardTokenResponse",
