@@ -6,6 +6,8 @@ import type {
   PaginatedResponse,
   PaginationOptions,
   UpdateBucketRequest,
+  SyncDeployRequest,
+  SyncDeployResponse,
 } from "../types.js";
 import { type FileOperationsWithIndexer, createFileOperations } from "./files.js";
 import { UploadTokenOperations } from "./upload-tokens.js";
@@ -65,6 +67,11 @@ export class BucketResource {
 
   async downloadZip(options?: RequestOptions): Promise<Response> {
     return this.transport.getResponse(`${this.basePath}/zip`, undefined, options);
+  }
+
+  async syncDeploy(request: SyncDeployRequest, token?: string, options?: RequestOptions): Promise<SyncDeployResponse> {
+    return this.transport.post<SyncDeployResponse>(`${this.basePath}/deploy/sync`, request,
+      token ? { token } : undefined, options);
   }
 }
 

@@ -265,6 +265,8 @@ catch (CarbonFilesException ex)
 | `["id"].GetSummaryAsync()` | Plaintext summary |
 | `["id"].DownloadZipAsync()` | Download as ZIP |
 
+`client.Buckets["id"].SyncDeployAsync(new SyncDeployRequest { Files = new() { new DeployFile { Path = "index.html", Sha256 = hash } } }, uploadToken)` verifies a complete manifest and prunes all other bucket files. Use a dedicated site bucket.
+
 ### `client.Buckets["id"].Files`
 | Method | Description |
 |--------|-------------|

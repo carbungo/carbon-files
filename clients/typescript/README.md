@@ -70,6 +70,18 @@ cf.stats.get();
 cf.health.check();
 ```
 
+## Static site deploy sync
+
+After uploading every desired file, submit its path and SHA-256 hash to prune files absent from the manifest. This replaces the entire bucket file set.
+
+```typescript
+await cf.buckets["bucket-id"].syncDeploy({
+  files: [{ path: "index.html", sha256: "...64 hex characters..." }],
+}, "cfu_upload_token");
+```
+
+For directory uploads with hash comparison, use `scripts/deploy-site.py` from the repository.
+
 ## Upload with Progress
 
 Track upload progress with a callback:

@@ -89,6 +89,16 @@ public class TestFixture : IAsyncLifetime
     public HttpClient CreateAdminClient()
         => CreateAuthenticatedClient("test-admin-key");
 
+    public async Task SetStoredMimeTypeAsync(string bucketId, string path, string mimeType)
+    {
+        using var cmd = _keepAlive.CreateCommand();
+        cmd.CommandText = "UPDATE Files SET MimeType = @mime WHERE BucketId = @bucket AND Path = @path";
+        cmd.Parameters.AddWithValue("@mime", mimeType);
+        cmd.Parameters.AddWithValue("@bucket", bucketId);
+        cmd.Parameters.AddWithValue("@path", path);
+        await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     public HttpClient CreateNoRedirectClient()
     {
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions

@@ -46,3 +46,18 @@ public class CreateDashboardTokenRequest
     [JsonPropertyName("expires_in")]
     public string? ExpiresIn { get; set; }
 }
+
+public class SyncDeployRequest
+{
+    [JsonPropertyName("files")]
+    public List<DeployFile> Files { get; set; } = new();
+}
+
+public class DeployFile
+{
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = "";
+
+    [JsonPropertyName("sha256")]
+    public string Sha256 { get; set; } = "";
+}

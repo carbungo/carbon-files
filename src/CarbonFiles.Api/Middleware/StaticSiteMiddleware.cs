@@ -46,6 +46,8 @@ public sealed class StaticSiteMiddleware
             return;
         }
         bucketId = bucket.Id;
+        context.Items["CarbonFiles.SiteRequest"] = true;
+        context.Response.Headers.XContentTypeOptions = "nosniff";
 
         var requestPath = (context.Request.Path.Value ?? string.Empty).Trim('/');
         if (requestPath.Length == 0)

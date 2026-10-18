@@ -131,6 +131,15 @@ export interface UploadResponse {
   uploaded: UploadedFile[];
 }
 
+export interface SyncDeployRequest {
+  files: { path: string; sha256: string }[];
+}
+
+export interface SyncDeployResponse {
+  kept: number;
+  deleted: number;
+}
+
 export interface VerifyResponse {
   path: string;
   stored_hash: string;

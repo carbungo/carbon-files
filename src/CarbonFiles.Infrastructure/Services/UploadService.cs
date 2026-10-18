@@ -35,15 +35,17 @@ public sealed class UploadService : IUploadService
         _logger.LogDebug("Storing file {Path} in bucket {BucketId}", path, bucketId);
 
         var name = Path.GetFileName(path);
-        var mimeType = MimeDetector.DetectFromExtension(path);
-
         // Stream to temp file, computing SHA256 inline
         var (tempPath, size, hash) = await _storage.StoreToTempAsync(content, maxSize, ct);
-
         bool deduplicated = false;
 
         try
         {
+            var prefix = new byte[(int)Math.Min(size, 4096)];
+            await using (var stored = File.OpenRead(tempPath))
+                await stored.ReadExactlyAsync(prefix, ct);
+            var mimeType = MimeDetector.Detect(path, prefix);
+
             // Check if content already exists
             var existingContent = await Db.QueryFirstOrDefaultAsync(_db,
                 "SELECT * FROM ContentObjects WHERE Hash = @hash",

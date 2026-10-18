@@ -151,6 +151,21 @@ volumes:
 
 Traefik handles WebSocket connections automatically for SignalR (`/hub/files`). No additional configuration is needed.
 
+## Static site deploys
+
+Set `CarbonFiles__SiteDomain` to the wildcard's base domain and route `*.files.example.com` to the API. Keep the API's own host routed separately. For a dedicated site bucket, create a bucket upload token with enough remaining uploads for each changed file, then use the Python 3 standard library deployer:
+
+```bash
+export CF_URL=https://files.example.com
+export CF_BUCKET=<bucket-id>
+export CF_TOKEN=<upload-token>
+python3 scripts/deploy-site.py /path/to/out
+```
+
+In GitHub Actions, download this script from the same version of CarbonFiles as the server, put `CF_TOKEN` in the step environment from a secret, and run it after the static export build. The script reads all bucket file hashes, uploads changed assets before HTML, and calls `POST /api/buckets/{id}/deploy/sync?token=...` with every path and SHA-256. The endpoint rejects missing or mismatched files with 409, an empty manifest with 400, and a token for another bucket with 403. Once verified, it removes files absent from the manifest in a single SQLite transaction. This replaces the entire bucket file set, including files uploaded outside the deploy; use a dedicated site bucket. It is safe to retry after interruption. Uploads themselves become visible individually, so the site switch is not atomic.
+
+There is no schema migration or backfill. New uploads store corrected MIME metadata; downloads and site serving derive MIME from the path or sniff extensionless content, so older files with wrong stored types are served correctly. HTML uses `Cache-Control: public, no-cache`; Next `/_next/static/` files use one year `immutable`; other site assets use one hour. Content responses include ETag, Last-Modified, range support, and gzip or Brotli for compressible content when requested. Site responses set `X-Content-Type-Options: nosniff`.
+
 ## Health Checks
 
 - **API**: `GET /healthz` returns 200 with `{"status": "healthy"}` or 503 if the database is unreachable.

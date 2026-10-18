@@ -33,4 +33,12 @@ public class BucketResource
 
     public Task<Stream> DownloadZipAsync(CancellationToken ct = default)
         => _transport.GetStreamAsync($"/api/buckets/{Uri.EscapeDataString(_id)}/zip", ct);
+
+    public Task<SyncDeployResponse> SyncDeployAsync(SyncDeployRequest request, string? uploadToken = null,
+        CancellationToken ct = default)
+    {
+        var path = $"/api/buckets/{Uri.EscapeDataString(_id)}/deploy/sync";
+        if (uploadToken != null) path += $"?token={Uri.EscapeDataString(uploadToken)}";
+        return _transport.PostAsync<SyncDeployRequest, SyncDeployResponse>(path, request, ct);
+    }
 }

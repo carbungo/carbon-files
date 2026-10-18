@@ -2,6 +2,12 @@
 
 This extends llms.txt with codebase internals. Read llms.txt first for the API reference.
 
+## Static site delivery and deploy sync
+
+`StaticSiteMiddleware` resolves bucket subdomains and clean paths, including SPA fallback and custom 404 pages. It calls the same physical-file result as the API content endpoint, preserving range, conditional requests, ETag, and Last-Modified. Site cache rules: HTML revalidates, `/_next/static/` uses one year immutable, other assets use one hour. Response compression negotiates Brotli or gzip. MIME is recalculated at serve time from the path or content prefix, so incorrect legacy stored metadata does not affect responses.
+
+`POST /api/buckets/{id}/deploy/sync` accepts a complete list of normalized paths and SHA-256 values from the bucket owner, admin, or a scoped upload token. `FileService.SyncDeployAsync` verifies all entries and prunes unlisted files inside one SQLite transaction, updating short URLs, CAS reference counts, and bucket totals. The Python standard-library script `scripts/deploy-site.py` compares local hashes with the public file list, uploads changed assets before HTML, then submits the manifest. The prune is atomic; changed uploads are visible one by one before it. No schema migration is needed.
+
 ## Database Schema
 
 SQLite with the following PRAGMAs applied at startup:

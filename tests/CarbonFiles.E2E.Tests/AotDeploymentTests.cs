@@ -70,6 +70,16 @@ public class AotDeploymentTests : IClassFixture<E2EFixture>
         uploadResp.StatusCode.Should().Be(HttpStatusCode.Created);
         var uploadJson = await uploadResp.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         uploadJson.Should().Contain("\"short_code\"").And.Contain("\"mime_type\"");
+        using var uploaded = JsonDocument.Parse(uploadJson);
+        var hash = uploaded.RootElement.GetProperty("uploaded")[0].GetProperty("sha256").GetString()!;
+
+        // === AOT source-generated deploy request and response ===
+        var syncResp = await keyClient.PostAsJsonAsync($"/api/buckets/{bucketId}/deploy/sync",
+            new { files = new[] { new { path = "test.txt", sha256 = hash } } }, JsonOptions,
+            TestContext.Current.CancellationToken);
+        syncResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await syncResp.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))
+            .Should().Contain("\"kept\":1").And.Contain("\"deleted\":0");
 
         // === Download file ===
         var downloadResp = await _fixture.Client.GetAsync(

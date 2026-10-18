@@ -2,6 +2,7 @@ using System.Data;
 using CarbonFiles.Core.Interfaces;
 using CarbonFiles.Core.Models;
 using CarbonFiles.Core.Models.Responses;
+using CarbonFiles.Core.Models.Requests;
 using CarbonFiles.Infrastructure.Data;
 using CarbonFiles.Infrastructure.Data.Entities;
 using Microsoft.Data.Sqlite;
@@ -358,6 +359,51 @@ public sealed class FileService : IFileService
         _cache.InvalidateBucket(bucketId);
         _cache.InvalidateStats();
         return true;
+    }
+
+    public async Task<SyncDeployResponse?> SyncDeployAsync(string bucketId, IReadOnlyList<DeployFile> files, CancellationToken ct = default)
+    {
+        var expected = files.ToDictionary(f => f.Path, f => f.Sha256, StringComparer.Ordinal);
+        using var tx = _db.BeginTransaction();
+        var current = await Db.QueryAsync(_db, "SELECT * FROM Files WHERE BucketId = @bucketId",
+            p => p.AddWithValue("@bucketId", bucketId), FileEntity.Read, tx, ct);
+        var present = current.ToDictionary(f => f.Path, StringComparer.Ordinal);
+
+        // Do not prune until every manifest entry is present with the exact uploaded content.
+        foreach (var file in files)
+        {
+            if (!present.TryGetValue(file.Path, out var stored) ||
+                !string.Equals(stored.ContentHash, file.Sha256, StringComparison.OrdinalIgnoreCase))
+                return null;
+        }
+
+        var stale = current.Where(f => !expected.ContainsKey(f.Path)).ToList();
+        long removedSize = 0;
+        foreach (var file in stale)
+        {
+            removedSize += file.Size;
+            await Db.ExecuteAsync(_db, "DELETE FROM ShortUrls WHERE BucketId = @bucketId AND FilePath = @path",
+                p => { p.AddWithValue("@bucketId", bucketId); p.AddWithValue("@path", file.Path); }, tx, ct);
+            await Db.ExecuteAsync(_db, "DELETE FROM Files WHERE BucketId = @bucketId AND Path = @path",
+                p => { p.AddWithValue("@bucketId", bucketId); p.AddWithValue("@path", file.Path); }, tx, ct);
+            if (file.ContentHash != null)
+                await Db.ExecuteAsync(_db, "UPDATE ContentObjects SET RefCount = RefCount - 1 WHERE Hash = @hash",
+                    p => p.AddWithValue("@hash", file.ContentHash), tx, ct);
+        }
+        await Db.ExecuteAsync(_db,
+            "UPDATE Buckets SET FileCount = MAX(0, FileCount - @count), TotalSize = MAX(0, TotalSize - @size), LastUsedAt = @now WHERE Id = @bucketId",
+            p => { p.AddWithValue("@count", stale.Count); p.AddWithValue("@size", removedSize); p.AddWithValue("@now", DateTime.UtcNow); p.AddWithValue("@bucketId", bucketId); }, tx, ct);
+        tx.Commit();
+
+        foreach (var file in stale)
+        {
+            if (file.ContentHash == null) _storage.DeleteFile(bucketId, file.Path);
+            _cache.InvalidateFile(bucketId, file.Path);
+            await _notifications.NotifyFileDeleted(bucketId, file.Path);
+        }
+        _cache.InvalidateBucket(bucketId);
+        _cache.InvalidateStats();
+        return new SyncDeployResponse { Kept = files.Count, Deleted = stale.Count };
     }
 
     public async Task<bool> PatchFileAsync(string bucketId, string path, Stream patchContent, long offset, bool append)
